@@ -1,0 +1,146 @@
+.customers-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.filter-bar {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.filter-search {
+  flex: 1;
+}
+
+.filter-select {
+  background-color: var(--bg-dark);
+  height: 38px;
+  min-width: 150px;
+}
+
+.filter-more-btn {
+  height: 38px;
+  background-color: var(--bg-dark);
+}
+
+.customers-table th {
+  letter-spacing: 0.5px;
+}
+
+.checkbox-col {
+  width: 48px;
+  text-align: center;
+}
+
+.custom-checkbox {
+  accent-color: var(--accent-primary);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  background-color: var(--bg-dark);
+  border: 1px solid var(--border-color);
+}
+
+.customer-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.customer-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 12px;
+}
+
+.action-buttons .icon-btn {
+  font-size: 18px;
+}
+
+.rows-per-page {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rows-per-page span {
+  font-size: 10px;
+}
+
+.page-info {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  width: 100%;
+  max-width: 450px;
+  background-color: var(--bg-panel);
+  padding: 0;
+  overflow: hidden;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
+}
+
+.modal-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.modal-form {
+  padding: 24px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 32px;
+}
+
+.selected-row {
+  background-color: rgba(16, 185, 129, 0.05) !important;
+}
+
+.text-danger {
+  color: var(--danger-color) !important;
+}
+
+.text-danger:hover {
+  background-color: rgba(239, 68, 68, 0.1) !important;
+}
