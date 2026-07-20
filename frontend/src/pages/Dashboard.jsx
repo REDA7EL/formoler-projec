@@ -16,18 +16,8 @@ const Dashboard = () => {
     chartData: []
   });
   
+  const [recentActivity, setRecentActivity] = useState([]);
   const [recentCampaigns, setRecentCampaigns] = useState([]);
-  
-  // Real data for chart if backend returns empty array or zeros
-  const defaultChartData = [
-    { name: 'Mon', messages: 45 },
-    { name: 'Tue', messages: 65 },
-    { name: 'Wed', messages: 40 },
-    { name: 'Thu', messages: 50 },
-    { name: 'Fri', messages: 75 },
-    { name: 'Sat', messages: 60 },
-    { name: 'Sun', messages: 90 }
-  ];
 
   useEffect(() => {
     // Fetch stats
@@ -45,6 +35,14 @@ const Dashboard = () => {
         setRecentCampaigns(sorted);
       })
       .catch(err => console.error("Failed to fetch campaigns", err));
+
+    // Fetch activity
+    fetch('http://localhost:3001/api/activity')
+      .then(res => res.json())
+      .then(data => {
+        if (data.activity) setRecentActivity(data.activity);
+      })
+      .catch(err => console.error("Failed to fetch activity", err));
   }, []);
 
   // Filter campaigns by search query
@@ -117,7 +115,7 @@ const Dashboard = () => {
             </div>
             <div className="chart-container" style={{ height: '300px', width: '100%', marginTop: '20px' }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={defaultChartData}>
+                <BarChart data={stats.chartData.length > 0 ? stats.chartData : [{name: 'No data', messages: 0}]}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
                   <XAxis dataKey="name" stroke="#94A3B8" axisLine={false} tickLine={false} dy={10} />
                   <YAxis stroke="#94A3B8" axisLine={false} tickLine={false} dx={-10} />
@@ -137,16 +135,25 @@ const Dashboard = () => {
               <h2 className="section-title">Recent Activity</h2>
             </div>
             <div className="activity-list">
-              {recentCampaigns.slice(0, 4).map((campaign, idx) => (
-                <div className="activity-item" key={idx}>
-                  <div className={`activity-dot dot-${campaign.status === 'Completed' ? 'neutral' : campaign.status === 'Draft' ? 'info' : 'success'}`}></div>
-                  <div className="activity-content">
-                    <div className="activity-text">Campaign "{campaign.name}" is {campaign.status.toLowerCase()}</div>
-                    <div className="activity-time">{campaign.date}</div>
+              {recentActivity.slice(0, 4).map((activity, idx) => {
+                // format date (e.g. "2024-10-24 09:00:00" -> just the time or simple string)
+                let timeStr = activity.createdAt;
+                try {
+                   const d = new Date(activity.createdAt);
+                   if (!isNaN(d)) timeStr = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                } catch(e) {}
+                
+                return (
+                  <div className="activity-item" key={idx}>
+                    <div className={`activity-dot dot-${activity.type === 'danger' ? 'danger' : activity.type === 'info' ? 'info' : activity.type === 'neutral' ? 'neutral' : 'success'}`}></div>
+                    <div className="activity-content">
+                      <div className="activity-text">{activity.message}</div>
+                      <div className="activity-time">{timeStr}</div>
+                    </div>
                   </div>
-                </div>
-              ))}
-              {recentCampaigns.length === 0 && (
+                );
+              })}
+              {recentActivity.length === 0 && (
                 <div className="activity-item" style={{justifyContent: 'center', color: '#94A3B8'}}>
                   No recent activity
                 </div>

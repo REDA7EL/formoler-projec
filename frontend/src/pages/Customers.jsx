@@ -1,12 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Header from '../components/Header';
-import { MdSearch, MdFilterList, MdFileDownload, MdPersonAdd, MdEdit, MdDelete, MdClose } from 'react-icons/md';
+import { MdSearch, MdFilterList, MdFileDownload, MdPersonAdd, MdEdit, MdDelete, MdClose, MdCheckCircle, MdError } from 'react-icons/md';
+import * as XLSX from 'xlsx';
 import './Customers.css';
 
 const Customers = () => {
   const [customers, setCustomers] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
-  
+  const fileInputRef = useRef(null);
+  const [toast, setToast] = useState(null);
+  const [importing, setImporting] = useState(false);
+
+  // Filter state
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [dateFilter, setDateFilter] = useState('Any');
+
   // Modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -22,6 +31,27 @@ const Customers = () => {
   useEffect(() => {
     fetchCustomers();
   }, []);
+
+  // ── Filtering logic (client-side, instant) ────────────────────────
+  const filteredCustomers = customers.filter(c => {
+    // 1. Search
+    const q = search.toLowerCase();
+    if (q && !c.name.toLowerCase().includes(q) && !c.phone.toLowerCase().includes(q)) return false;
+
+    // 2. Status
+    if (statusFilter !== 'All' && c.status !== statusFilter) return false;
+
+    // 3. Date
+    if (dateFilter !== 'Any' && c.dateAdded) {
+      const added = new Date(c.dateAdded);
+      const now   = new Date();
+      const days  = dateFilter === 'Last 7 Days' ? 7 : 30;
+      const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+      if (added < cutoff) return false;
+    }
+
+    return true;
+  });
 
   // Selection Logic
   const handleSelectAll = (e) => {
@@ -97,6 +127,83 @@ const Customers = () => {
     }
   };
 
+  // ── Toast helper ──────────────────────────────────────────────────
+  const showToast = (type, msg) => {
+    setToast({ type, msg });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  // ── Import Excel / CSV ────────────────────────────────────────────
+  const handleImportCSV = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    e.target.value = '';
+
+    setImporting(true);
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const data = new Uint8Array(evt.target.result);
+        const wb = XLSX.read(data, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+
+        // Convert to array-of-arrays to inspect headers manually
+        const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+        if (!rawRows.length || rawRows.length < 2) {
+          showToast('error', 'The file is empty or has no data rows.');
+          setImporting(false);
+          return;
+        }
+
+        // First row = headers
+        const headers = rawRows[0].map(h => String(h).trim());
+
+        // Auto-detect column indices (case-insensitive)
+        const nameIdx  = headers.findIndex(h => /nom|name|prenom|first/i.test(h));
+        const phoneIdx = headers.findIndex(h => /phone|tel|mobile|num|gsm/i.test(h));
+
+        // If no header match, assume col 0 = name, col 1 = phone (or col 0 = phone if only 1 col)
+        const resolvedNameIdx  = nameIdx  >= 0 ? nameIdx  : 0;
+        const resolvedPhoneIdx = phoneIdx >= 0 ? phoneIdx : (headers.length > 1 ? 1 : 0);
+
+        const list = rawRows.slice(1)
+          .map(row => ({
+            name:  String(row[resolvedNameIdx]  || '').trim(),
+            phone: String(row[resolvedPhoneIdx] || '').trim()
+          }))
+          .filter(r => r.phone);
+
+        if (!list.length) {
+          showToast('error', 'No valid phone numbers found in the file.');
+          setImporting(false);
+          return;
+        }
+
+        const res = await fetch('http://localhost:3001/api/customers/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ customers: list })
+        });
+        const json = await res.json();
+
+        if (json.success) {
+          showToast('success', `✅ ${json.inserted} contacts imported successfully!`);
+          fetchCustomers();
+        } else {
+          showToast('error', json.error || 'Import failed.');
+        }
+      } catch (err) {
+        console.error(err);
+        showToast('error', 'Error reading file. Make sure it is a valid Excel or CSV file.');
+      } finally {
+        setImporting(false);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
   return (
     <div className="customers-page">
       <div className="page-header header-with-actions">
@@ -110,7 +217,20 @@ const Customers = () => {
               <MdDelete /> Delete Selected ({selectedIds.length})
             </button>
           )}
-          <button className="btn btn-secondary"><MdFileDownload /> Import CSV</button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            style={{ display: 'none' }}
+            onChange={handleImportCSV}
+          />
+          <button
+            className={`btn btn-secondary${importing ? ' btn-loading' : ''}`}
+            onClick={() => fileInputRef.current.click()}
+            disabled={importing}
+          >
+            <MdFileDownload /> {importing ? 'Importing…' : 'Import CSV'}
+          </button>
           <button className="btn btn-primary" onClick={openAddModal}><MdPersonAdd /> Add Customer</button>
         </div>
       </div>
@@ -120,22 +240,43 @@ const Customers = () => {
         <div className="filter-bar">
           <div className="search-bar filter-search">
             <MdSearch className="search-icon" />
-            <input type="text" placeholder="Search by name or phone..." className="search-input" />
+            <input
+              type="text"
+              placeholder="Search by name or phone..."
+              className="search-input"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
           </div>
-          
-          <select className="dropdown-select filter-select">
-            <option>Status: All</option>
-            <option>Active</option>
-            <option>Opt-out</option>
+
+          <select
+            className="dropdown-select filter-select"
+            value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value)}
+          >
+            <option value="All">Status: All</option>
+            <option value="Active">Active</option>
+            <option value="Opt-out">Opt-out</option>
           </select>
-          
-          <select className="dropdown-select filter-select">
-            <option>Date Added: Any</option>
-            <option>Last 7 Days</option>
-            <option>Last 30 Days</option>
+
+          <select
+            className="dropdown-select filter-select"
+            value={dateFilter}
+            onChange={e => setDateFilter(e.target.value)}
+          >
+            <option value="Any">Date Added: Any</option>
+            <option value="Last 7 Days">Last 7 Days</option>
+            <option value="Last 30 Days">Last 30 Days</option>
           </select>
-          
-          <button className="btn btn-secondary filter-more-btn"><MdFilterList /> More Filters</button>
+
+          {(search || statusFilter !== 'All' || dateFilter !== 'Any') && (
+            <button
+              className="btn btn-secondary filter-more-btn"
+              onClick={() => { setSearch(''); setStatusFilter('All'); setDateFilter('Any'); }}
+            >
+              ✕ Clear
+            </button>
+          )}
         </div>
 
         {/* Table */}
@@ -159,7 +300,7 @@ const Customers = () => {
               </tr>
             </thead>
             <tbody>
-              {customers.length > 0 ? customers.map((customer) => (
+              {filteredCustomers.length > 0 ? filteredCustomers.map((customer) => (
                 <tr key={customer.id} className={selectedIds.includes(customer.id) ? 'selected-row' : ''}>
                   <td className="checkbox-col">
                     <input 
@@ -192,7 +333,11 @@ const Customers = () => {
                   </td>
                 </tr>
               )) : (
-                <tr><td colSpan="6" style={{textAlign: 'center', padding: '20px'}}>No customers found.</td></tr>
+                <tr><td colSpan="6" style={{textAlign: 'center', padding: '20px'}}>
+                  {search || statusFilter !== 'All' || dateFilter !== 'Any'
+                    ? 'No customers match your filters.'
+                    : 'No customers found.'}
+                </td></tr>
               )}
             </tbody>
           </table>
@@ -202,7 +347,7 @@ const Customers = () => {
               Rows per page: <strong>10</strong> <span>v</span>
             </div>
             <div className="page-info">
-              <span>1-{customers.length} of {customers.length}</span>
+              <span>{filteredCustomers.length === 0 ? '0' : `1-${filteredCustomers.length}`} of {filteredCustomers.length}</span>
               <div className="page-controls">
                 <button className="page-btn">&lt;</button>
                 <button className="page-btn">&gt;</button>
@@ -258,6 +403,13 @@ const Customers = () => {
               </div>
             </form>
           </div>
+        </div>
+      )}
+      {/* Toast notification */}
+      {toast && (
+        <div className={`import-toast import-toast-${toast.type}`}>
+          {toast.type === 'success' ? <MdCheckCircle size={20} /> : <MdError size={20} />}
+          <span>{toast.msg}</span>
         </div>
       )}
     </div>

@@ -1,22 +1,42 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import { 
   MdFormatBold, MdFormatItalic, MdFormatStrikethrough, MdEmojiEmotions, 
   MdCode, MdSave, MdSend, MdArrowBack, MdImage, MdVideocam, MdMic,
   MdClose, MdCheckCircle, MdUpload
 } from 'react-icons/md';
+import EmojiPicker from 'emoji-picker-react';
 import './CreateCampaign.css';
 
 const CreateCampaign = () => {
   const [campaignName, setCampaignName] = useState('');
   const [message, setMessage] = useState('');
+  const [targetAudience, setTargetAudience] = useState('All');
   const [uploadedMedia, setUploadedMedia] = useState([]);  // { type, name, url, preview }
   const [uploading, setUploading] = useState(null);        // 'image' | 'video' | 'audio' | null
   const [uploadError, setUploadError] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+
+  const navigate = useNavigate();
 
   const imageRef = useRef(null);
   const videoRef = useRef(null);
   const audioRef = useRef(null);
+  const textareaRef = useRef(null);
+  const emojiPickerRef = useRef(null);
+
+  // Close emoji picker when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target)) {
+        setShowEmojiPicker(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [emojiPickerRef]);
 
   // Upload a file to backend
   const handleUpload = async (file, type) => {
@@ -51,6 +71,35 @@ const CreateCampaign = () => {
     }
   };
 
+  const handleSave = async (status) => {
+    if (!campaignName) {
+      alert("Please enter a campaign name.");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const media_ids = uploadedMedia.map(m => m.id);
+      const res = await fetch('http://localhost:3001/api/campaigns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: campaignName,
+          message,
+          status,
+          target_audience: targetAudience,
+          media_ids
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save campaign');
+      navigate('/campaigns');
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const removeMedia = (idx) => {
     setUploadedMedia(prev => prev.filter((_, i) => i !== idx));
   };
@@ -59,6 +108,51 @@ const CreateCampaign = () => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  // Text Formatting Helpers
+  const insertFormatting = (syntax) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selectedText = message.substring(start, end);
+    const beforeText = message.substring(0, start);
+    const afterText = message.substring(end);
+
+    const formattedText = `${syntax}${selectedText}${syntax}`;
+    const newMessage = beforeText + formattedText + afterText;
+    
+    setMessage(newMessage);
+    
+    // Set focus and selection back
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start + syntax.length, end + syntax.length);
+    }, 0);
+  };
+
+  const onEmojiClick = (emojiObject) => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+       setMessage(prev => prev + emojiObject.emoji);
+       return;
+    }
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const beforeText = message.substring(0, start);
+    const afterText = message.substring(end);
+
+    const newMessage = beforeText + emojiObject.emoji + afterText;
+    setMessage(newMessage);
+    // Optional: Keep picker open if they want to add multiple emojis
+    // setShowEmojiPicker(false); 
+    
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start + emojiObject.emoji.length, start + emojiObject.emoji.length);
+    }, 0);
   };
 
   // Find the first image for preview
@@ -89,6 +183,18 @@ const CreateCampaign = () => {
                   onChange={(e) => setCampaignName(e.target.value)}
                 />
               </div>
+              <div className="form-group mt-4">
+                <label>Recipients (Target Audience)</label>
+                <select 
+                  className="input" 
+                  value={targetAudience}
+                  onChange={(e) => setTargetAudience(e.target.value)}
+                >
+                  <option value="All">All Active Customers</option>
+                  <option value="Tag:VIP">Tag: VIP</option>
+                  <option value="Tag:Customer">Tag: Customer</option>
+                </select>
+              </div>
             </div>
 
             <div className="card">
@@ -99,18 +205,30 @@ const CreateCampaign = () => {
               
               <div className="editor-toolbar">
                 <div className="toolbar-group">
-                  <button className="toolbar-btn" title="Bold"><MdFormatBold /></button>
-                  <button className="toolbar-btn" title="Italic"><MdFormatItalic /></button>
-                  <button className="toolbar-btn" title="Strikethrough"><MdFormatStrikethrough /></button>
+                  <button className="toolbar-btn" title="Bold" onClick={() => insertFormatting('*')}><MdFormatBold /></button>
+                  <button className="toolbar-btn" title="Italic" onClick={() => insertFormatting('_')}><MdFormatItalic /></button>
+                  <button className="toolbar-btn" title="Strikethrough" onClick={() => insertFormatting('~')}><MdFormatStrikethrough /></button>
                 </div>
-                <div className="toolbar-group">
-                  <button className="toolbar-btn" title="Emoji"><MdEmojiEmotions /></button>
+                <div className="toolbar-group" style={{ position: 'relative' }} ref={emojiPickerRef}>
+                  <button 
+                    className={`toolbar-btn ${showEmojiPicker ? 'active' : ''}`} 
+                    title="Emoji" 
+                    onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                  >
+                    <MdEmojiEmotions />
+                  </button>
+                  {showEmojiPicker && (
+                    <div style={{ position: 'absolute', zIndex: 1000, top: '40px', left: 0, boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
+                      <EmojiPicker onEmojiClick={onEmojiClick} searchDisabled={false} />
+                    </div>
+                  )}
                 </div>
                 <div className="toolbar-spacer"></div>
                 <button className="btn btn-text"><MdCode /> Add Variable</button>
               </div>
               
               <textarea 
+                ref={textareaRef}
                 className="message-textarea" 
                 placeholder="Type your WhatsApp message here..."
                 value={message}
@@ -270,8 +388,20 @@ const CreateCampaign = () => {
       </div>
 
       <div className="bottom-bar">
-        <button className="btn btn-secondary"><MdSave /> Save Draft</button>
-        <button className="btn btn-primary"><MdSend /> Send Campaign</button>
+        <button 
+          className="btn btn-secondary" 
+          onClick={() => handleSave('Draft')}
+          disabled={isSaving}
+        >
+          <MdSave /> {isSaving ? 'Saving...' : 'Save Draft'}
+        </button>
+        <button 
+          className="btn btn-primary" 
+          onClick={() => handleSave('Sending')}
+          disabled={isSaving}
+        >
+          <MdSend /> {isSaving ? 'Sending...' : 'Send Campaign'}
+        </button>
       </div>
     </div>
   );

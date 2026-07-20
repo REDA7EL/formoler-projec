@@ -9,13 +9,15 @@
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "electron:start": "wait-on tcp:5173 && electron .",
+    "electron:start": "wait-on tcp:5173 && cross-env NODE_ENV=development ELECTRON_DISABLE_SECURITY_WARNINGS=true electron .",
     "electron:dev": "concurrently -k \"cross-env BROWSER=none npm run dev\" \"npm run electron:start\""
   },
   "dependencies": {
+    "emoji-picker-react": "^4.19.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "recharts": "^3.9.2"
+    "recharts": "^3.9.2",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/react": "^19.2.17",

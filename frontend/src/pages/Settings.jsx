@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Header from '../components/Header';
 import { 
   MdVpnKey, MdWebhook, MdPeople, MdVisibilityOff, MdVisibility, 
-  MdSync, MdAdd, MdClose, MdSettings, MdLock, MdDelete, MdEdit
+  MdSync, MdAdd, MdClose, MdSettings, MdLock, MdDelete, MdEdit, MdSave, MdCheckCircle, MdError
 } from 'react-icons/md';
 import './Settings.css';
 
@@ -48,16 +48,85 @@ const GeneralTab = () => (
   </div>
 );
 
-// ─── TAB: API Connection ──────────────────────────────────────────────────────
-const ApiTab = ({ showToken, setShowToken, isTesting, setIsTesting, testResult, setTestResult }) => {
-  const handleTestConnection = () => {
+// ─── TAB: API Connection ────────────────────────────────────────────────
+const ApiTab = () => {
+  const [showToken, setShowToken]     = useState(false);
+  const [isTesting, setIsTesting]     = useState(false);
+  const [isSaving, setIsSaving]       = useState(false);
+  const [testResult, setTestResult]   = useState(null);   // null | { success, displayName, phoneNumber, status, quality, error }
+  const [saveMsg, setSaveMsg]         = useState(null);   // null | 'ok' | 'err'
+  const [isConnected, setIsConnected] = useState(false);
+
+  const [creds, setCreds] = useState({
+    access_token:        '',
+    phone_id:            '',
+    business_id:         '',
+    whatsapp_delay_ms:   '1000',
+    webhook_url:         '',
+    webhook_token:       ''
+  });
+
+  // Load from backend on mount
+  useEffect(() => {
+    fetch('http://localhost:3001/api/settings')
+      .then(r => r.json())
+      .then(data => {
+        const s = data.settings || {};
+        setCreds({
+          access_token:      s.access_token      || '',
+          phone_id:          s.phone_id          || '',
+          business_id:       s.business_id       || '',
+          whatsapp_delay_ms: s.whatsapp_delay_ms || '1000',
+          webhook_url:       s.webhook_url       || '',
+          webhook_token:     s.webhook_token     || ''
+        });
+      })
+      .catch(console.error);
+  }, []);
+
+  const handleChange = (key, val) => setCreds(prev => ({ ...prev, [key]: val }));
+
+  // Save credentials to backend
+  const handleSave = async () => {
+    setIsSaving(true);
+    setSaveMsg(null);
+    try {
+      await fetch('http://localhost:3001/api/settings/bulk', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings: creds })
+      });
+      setSaveMsg('ok');
+      setTimeout(() => setSaveMsg(null), 3000);
+    } catch {
+      setSaveMsg('err');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Test real connection via backend
+  const handleTestConnection = async () => {
     setIsTesting(true);
     setTestResult(null);
-    setTimeout(() => {
+    try {
+      const res = await fetch('http://localhost:3001/api/whatsapp/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: creds.access_token,
+          phoneNumberId: creds.phone_id
+        })
+      });
+      const data = await res.json();
+      setTestResult(data);
+      setIsConnected(data.success);
+      setTimeout(() => setTestResult(null), 6000);
+    } catch (err) {
+      setTestResult({ success: false, error: err.message });
+    } finally {
       setIsTesting(false);
-      setTestResult('success');
-      setTimeout(() => setTestResult(null), 3000);
-    }, 1500);
+    }
   };
 
   return (
@@ -67,44 +136,106 @@ const ApiTab = ({ showToken, setShowToken, isTesting, setIsTesting, testResult, 
           <h2 className="settings-title">WhatsApp Business API</h2>
           <p className="settings-subtitle">Configure your credentials to enable messaging capabilities.</p>
         </div>
-        <div className="status-badge connected">
-          <div className="dot"></div> CONNECTED
+        <div className={`status-badge ${isConnected ? 'connected' : ''}`}>
+          <div className="dot"></div>
+          {isConnected ? 'CONNECTED' : 'NOT TESTED'}
         </div>
       </div>
+
+      {/* Credentials Card */}
       <div className="card settings-card">
         <div className="card-header-icon">
           <MdVpnKey className="section-icon" />
           <h3>API Credentials</h3>
         </div>
+
         <div className="form-group mt-3">
           <label>PERMANENT ACCESS TOKEN</label>
           <div className="input-wrapper" style={{ position: 'relative' }}>
-            <input type={showToken ? "text" : "password"} value="EAAOl7ZA6qZBHgBO7yZC..." readOnly className="input" style={{ width: '100%' }} />
-            <button className="icon-btn" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'none', color: '#94A3B8' }} onClick={() => setShowToken(!showToken)}>
+            <input
+              type={showToken ? 'text' : 'password'}
+              value={creds.access_token}
+              onChange={e => handleChange('access_token', e.target.value)}
+              className="input"
+              style={{ width: '100%', paddingRight: '42px' }}
+              placeholder="EAAOl7ZA6q..."
+            />
+            <button
+              className="icon-btn"
+              style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'none', color: '#94A3B8' }}
+              onClick={() => setShowToken(!showToken)}
+            >
               {showToken ? <MdVisibility /> : <MdVisibilityOff />}
             </button>
           </div>
         </div>
+
         <div className="grid-2-col mt-3">
           <div className="form-group">
             <label>PHONE NUMBER ID</label>
-            <input type="text" value="102938475610293" readOnly className="input" />
+            <input
+              type="text"
+              value={creds.phone_id}
+              onChange={e => handleChange('phone_id', e.target.value)}
+              className="input"
+              placeholder="e.g. 102938475610293"
+            />
           </div>
           <div className="form-group">
             <label>BUSINESS ACCOUNT ID</label>
-            <input type="text" value="883746291038475" readOnly className="input" />
+            <input
+              type="text"
+              value={creds.business_id}
+              onChange={e => handleChange('business_id', e.target.value)}
+              className="input"
+              placeholder="e.g. 883746291038475"
+            />
           </div>
         </div>
+
+        <div className="form-group mt-3">
+          <label>DELAY BETWEEN MESSAGES (ms)</label>
+          <input
+            type="number"
+            min="500"
+            max="5000"
+            step="100"
+            value={creds.whatsapp_delay_ms}
+            onChange={e => handleChange('whatsapp_delay_ms', e.target.value)}
+            className="input"
+            style={{ maxWidth: '200px' }}
+          />
+          <small style={{ color: '#64748b', display: 'block', marginTop: '4px' }}>Recommended: 1000ms to avoid Meta rate limits</small>
+        </div>
+
         <div className="settings-card-footer mt-4">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <button className="btn btn-secondary btn-sm" onClick={handleTestConnection} disabled={isTesting}>
-              <MdSync className={isTesting ? "spin" : ""} /> {isTesting ? 'Testing...' : 'Test Connection'}
+              <MdSync className={isTesting ? 'spin' : ''} />
+              {isTesting ? 'Testing...' : 'Test Connection'}
             </button>
-            {testResult === 'success' && <span style={{ color: '#10b981', fontSize: '13px' }}>✓ Connection Successful!</span>}
+            {testResult && testResult.success && (
+              <span style={{ color: '#10b981', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <MdCheckCircle /> Connected — {testResult.displayName} ({testResult.phoneNumber})
+              </span>
+            )}
+            {testResult && !testResult.success && (
+              <span style={{ color: '#ef4444', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <MdError /> {testResult.error}
+              </span>
+            )}
           </div>
-          <button className="btn btn-primary btn-sm" onClick={() => alert("API settings saved!")}>Save Changes</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {saveMsg === 'ok' && <span style={{ color: '#10b981', fontSize: '13px' }}>✓ Saved!</span>}
+            {saveMsg === 'err' && <span style={{ color: '#ef4444', fontSize: '13px' }}>✗ Save failed</span>}
+            <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={isSaving}>
+              <MdSave /> {isSaving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Webhook Card */}
       <div className="card settings-card mt-4">
         <div className="card-header-icon">
           <MdWebhook className="section-icon text-secondary" />
@@ -112,11 +243,29 @@ const ApiTab = ({ showToken, setShowToken, isTesting, setIsTesting, testResult, 
         </div>
         <div className="form-group mt-3">
           <label>CALLBACK URL</label>
-          <input type="text" value="https://api.yourdomain.com/v1/whatsapp/webhook" readOnly className="input" />
+          <input
+            type="text"
+            value={creds.webhook_url}
+            onChange={e => handleChange('webhook_url', e.target.value)}
+            className="input"
+            placeholder="https://api.yourdomain.com/v1/whatsapp/webhook"
+          />
         </div>
         <div className="form-group mt-3">
           <label>VERIFY TOKEN</label>
-          <input type="text" value="secret_token_12345" readOnly className="input" />
+          <input
+            type="text"
+            value={creds.webhook_token}
+            onChange={e => handleChange('webhook_token', e.target.value)}
+            className="input"
+            placeholder="secret_token_12345"
+          />
+        </div>
+        <div className="settings-card-footer mt-4">
+          <span></span>
+          <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={isSaving}>
+            <MdSave /> Save Webhook
+          </button>
         </div>
       </div>
     </div>
@@ -281,13 +430,7 @@ const Settings = () => {
         {/* Settings Content */}
         <div className="settings-content">
           {activeTab === 'general' && <GeneralTab />}
-          {activeTab === 'api' && (
-            <ApiTab
-              showToken={showToken} setShowToken={setShowToken}
-              isTesting={isTesting} setIsTesting={setIsTesting}
-              testResult={testResult} setTestResult={setTestResult}
-            />
-          )}
+          {activeTab === 'api' && <ApiTab />}
           {activeTab === 'team' && <TeamTab openAddUser={() => setIsAddUserModalOpen(true)} />}
           {activeTab === 'security' && <SecurityTab />}
         </div>

@@ -1,5 +1,48 @@
 const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
+const path    = require('path');
+const crypto  = require('crypto');
+
+// ─── Token Encryption ─────────────────────────────────────────────────────────
+// Uses AES-256-GCM with a key derived from an env variable or a local fallback.
+// Set ENCRYPT_KEY in your environment for production (32-char string).
+const RAW_KEY    = process.env.ENCRYPT_KEY || 'formoler-whatsapp-secret-key-32x';
+const CIPHER_KEY = crypto.createHash('sha256').update(RAW_KEY).digest(); // 32 bytes
+const ALGO       = 'aes-256-gcm';
+
+/**
+ * Encrypt a plaintext string.
+ * @param {string} text
+ * @returns {string}  "iv:authTag:ciphertext" (hex-encoded)
+ */
+function encrypt(text) {
+    if (!text) return text;
+    const iv         = crypto.randomBytes(12);          // 96-bit IV for GCM
+    const cipher     = crypto.createCipheriv(ALGO, CIPHER_KEY, iv);
+    const encrypted  = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
+    const authTag    = cipher.getAuthTag();
+    return [iv.toString('hex'), authTag.toString('hex'), encrypted.toString('hex')].join(':');
+}
+
+/**
+ * Decrypt a string produced by encrypt().
+ * Returns the original text, or the input unchanged if it was never encrypted.
+ * @param {string} encoded
+ * @returns {string}
+ */
+function decrypt(encoded) {
+    if (!encoded || !encoded.includes(':')) return encoded; // not encrypted
+    try {
+        const [ivHex, tagHex, dataHex] = encoded.split(':');
+        const iv       = Buffer.from(ivHex,  'hex');
+        const authTag  = Buffer.from(tagHex, 'hex');
+        const data     = Buffer.from(dataHex,'hex');
+        const decipher = crypto.createDecipheriv(ALGO, CIPHER_KEY, iv);
+        decipher.setAuthTag(authTag);
+        return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
+    } catch {
+        return encoded; // return as-is if decryption fails (e.g. plain legacy value)
+    }
+}
 
 const dbPath = path.resolve(__dirname, '../database.sqlite');
 const db = new sqlite3.Database(dbPath, (err) => {
@@ -73,11 +116,39 @@ function initDb() {
             )
         `);
 
-        // ─── SETTINGS TABLE ───────────────────────────────────────────
+        // ─── CAMPAIGN CUSTOMERS TABLE (RELATION) ──────────────────────
+        db.run(`
+            CREATE TABLE IF NOT EXISTS campaign_customers (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                campaign_id     INTEGER NOT NULL,
+                customer_id     INTEGER NOT NULL,
+                status          TEXT    NOT NULL DEFAULT 'Pending',
+                errorMessage    TEXT    DEFAULT '',
+                deliveredAt     TEXT    NULL,
+                FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
+                FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+            )
+        `);
+
+        // ─── SETTINGS TABLE ───────────────────────────────────────────────
         db.run(`
             CREATE TABLE IF NOT EXISTS settings (
                 key   TEXT PRIMARY KEY,
                 value TEXT
+            )
+        `);
+
+        // ─── TEMPLATES TABLE ──────────────────────────────────────────────
+        db.run(`
+            CREATE TABLE IF NOT EXISTS templates (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT    NOT NULL UNIQUE,
+                displayName TEXT    NOT NULL DEFAULT '',
+                category    TEXT    NOT NULL DEFAULT 'MARKETING',
+                language    TEXT    NOT NULL DEFAULT 'en_US',
+                status      TEXT    NOT NULL DEFAULT 'pending',
+                bodyText    TEXT    DEFAULT '',
+                createdAt   TEXT    DEFAULT (datetime('now'))
             )
         `);
 
@@ -110,30 +181,35 @@ function initDb() {
         });
 
         db.get("SELECT COUNT(*) as count FROM campaigns", (err, row) => {
-            if (row && row.count === 0) {
-                const stmt = db.prepare(`INSERT INTO campaigns (name, message, status, progress, sent, openRate, clickRate, deliveryFail, recipients, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-                stmt.run("Summer Sale 2024",  "Hello {{name}}, check out our summer deals!", "Sending",   45,  124000, "68%", "24%", "1.2%", 124000, "Oct 24, 2023");
-                stmt.run("VIP Announcement",  "Hi {{name}}, you are invited to our VIP event.", "Completed", 100, 45210,  "72%", "28%", "0.5%", 45210,  "Oct 20, 2023");
-                stmt.finalize();
-            }
+            // Leave campaigns empty — no fake data
         });
 
         db.get("SELECT COUNT(*) as count FROM settings", (err, row) => {
             if (row && row.count === 0) {
                 const defaults = [
-                    ['app_name',       'WhatsApp Campaign Manager'],
-                    ['timezone',       'UTC+01:00'],
-                    ['language',       'English'],
-                    ['access_token',   'EAAOl7ZA6qZBHgBO7yZC...'],
-                    ['phone_id',       '102938475610293'],
-                    ['business_id',    '883746291038475'],
-                    ['webhook_url',    'https://api.yourdomain.com/v1/whatsapp/webhook'],
-                    ['webhook_token',  'secret_token_12345'],
-                    ['two_factor',     'false'],
+                    ['app_name',          'WhatsApp Campaign Manager'],
+                    ['timezone',          'UTC+01:00'],
+                    ['language',          'English'],
+                    ['access_token',      encrypt('EAAOl7ZA6qZBHgBO7yZC...')],
+                    ['phone_id',          '102938475610293'],
+                    ['business_id',       '883746291038475'],
+                    ['webhook_url',       'https://api.yourdomain.com/v1/whatsapp/webhook'],
+                    ['webhook_token',     'secret_token_12345'],
+                    ['two_factor',        'false'],
+                    ['whatsapp_delay_ms', '1000'],
                 ];
                 const stmt = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)");
                 defaults.forEach(([k, v]) => stmt.run(k, v));
                 stmt.finalize();
+            }
+        });
+
+        // Seed one example template
+        db.get("SELECT COUNT(*) as count FROM templates", (err, row) => {
+            if (row && row.count === 0) {
+                db.run(`INSERT INTO templates (name, displayName, category, language, status, bodyText)
+                        VALUES ('hello_world', 'Hello World', 'UTILITY', 'en_US', 'approved',
+                        'Hello {{1}}! This is a test message from our platform.')`);
             }
         });
 
@@ -150,4 +226,5 @@ function initDb() {
     });
 }
 
-module.exports = db;
+module.exports = { db, encrypt, decrypt };
+

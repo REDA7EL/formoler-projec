@@ -6,12 +6,17 @@
 
 .filter-bar {
   display: flex;
+  align-items: center;
   gap: 16px;
   margin-bottom: 24px;
 }
 
 .filter-search {
   flex: 1;
+  width: auto;
+  max-width: 400px;
+  height: 38px;
+  padding: 0 16px;
 }
 
 .filter-select {
@@ -143,4 +148,44 @@
 
 .text-danger:hover {
   background-color: rgba(239, 68, 68, 0.1) !important;
+}
+
+/* ── Import toast ─────────────────────────────────────────────────── */
+.import-toast {
+  position: fixed;
+  bottom: 32px;
+  right: 32px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  z-index: 2000;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  animation: slideInToast 0.3s ease;
+}
+
+@keyframes slideInToast {
+  from { transform: translateY(20px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+.import-toast-success {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  color: #10B981;
+}
+
+.import-toast-error {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #EF4444;
+}
+
+/* ── Import button loading state ─────────────────────────────────── */
+.btn-loading {
+  opacity: 0.7;
+  cursor: not-allowed;
 }

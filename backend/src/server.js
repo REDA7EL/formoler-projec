@@ -1,10 +1,13 @@
+require('dotenv').config(); // Load .env first
+
 const express = require('express');
 const cors    = require('cors');
 const path    = require('path');
 const fs      = require('fs');
 const multer  = require('multer');
 const { v4: uuidv4 } = require('uuid');
-const db      = require('./db');
+const { db, encrypt, decrypt } = require('./db');
+const wa      = require('./whatsapp');
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -132,6 +135,29 @@ app.post('/api/customers', (req, res) => {
     );
 });
 
+// POST /api/customers/import  — body: { customers: [{ name, phone }] }
+app.post('/api/customers/import', (req, res) => {
+    const { customers: list } = req.body;
+    if (!list || !list.length) return res.status(400).json({ error: 'No customers provided' });
+
+    const date = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const stmt = db.prepare('INSERT INTO customers (name, phone, email, status, tags, dateAdded) VALUES (?, ?, ?, ?, ?, ?)');
+    let inserted = 0;
+
+    list.forEach(c => {
+        if (c.phone) {
+            stmt.run([c.name || '', String(c.phone), '', 'Active', '', date]);
+            inserted++;
+        }
+    });
+
+    stmt.finalize(err => {
+        if (err) return res.status(500).json({ error: err.message });
+        db.run('INSERT INTO activity (type, message) VALUES (?, ?)', ['info', `Imported ${inserted} customers from file`]);
+        res.json({ success: true, inserted });
+    });
+});
+
 // PUT /api/customers/:id
 app.put('/api/customers/:id', (req, res) => {
     const { name, phone, email, status, tags } = req.body;
@@ -193,18 +219,58 @@ app.get('/api/campaigns/:id', (req, res) => {
 
 // POST /api/campaigns
 app.post('/api/campaigns', (req, res) => {
-    const { name, message, status, progress, sent, openRate, clickRate, deliveryFail, recipients } = req.body;
+    const { name, message, status, target_audience, media_ids } = req.body;
     const date = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    db.run(
-        `INSERT INTO campaigns (name, message, status, progress, sent, openRate, clickRate, deliveryFail, recipients, date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [name, message || '', status || 'Draft', progress || 0, sent || 0, openRate || '0%', clickRate || '0%', deliveryFail || '0%', recipients || 0, date],
-        function(err) {
-            if (err) return res.status(500).json({ error: err.message });
-            db.run('INSERT INTO activity (type, message) VALUES (?, ?)', ['success', `Campaign "${name}" created`]);
-            res.json({ success: true, id: this.lastID });
-        }
-    );
+    
+    // First, determine recipients count based on target_audience
+    let customerSql = 'SELECT id FROM customers WHERE status = "Active"';
+    let customerArgs = [];
+    
+    if (target_audience && target_audience.startsWith('Tag:')) {
+        const tag = target_audience.replace('Tag:', '').trim();
+        customerSql += ' AND tags LIKE ?';
+        customerArgs.push(`%${tag}%`);
+    }
+
+    db.all(customerSql, customerArgs, (err, customers) => {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        const recipientsCount = customers.length;
+
+        // Insert Campaign
+        db.run(
+            `INSERT INTO campaigns (name, message, status, progress, sent, openRate, clickRate, deliveryFail, recipients, date)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [name, message || '', status || 'Draft', 0, 0, '0%', '0%', '0%', recipientsCount, date],
+            function(err) {
+                if (err) return res.status(500).json({ error: err.message });
+                const campaignId = this.lastID;
+
+                // Insert into campaign_customers
+                if (recipientsCount > 0) {
+                    const placeholders = customers.map(() => '(?, ?, ?)').join(',');
+                    const insertArgs = [];
+                    customers.forEach(c => {
+                        insertArgs.push(campaignId, c.id, status === 'Sending' || status === 'Scheduled' ? 'Pending' : 'Draft');
+                    });
+                    db.run(`INSERT INTO campaign_customers (campaign_id, customer_id, status) VALUES ${placeholders}`, insertArgs, (err) => {
+                        if (err) console.error('Failed to link customers', err);
+                    });
+                }
+
+                // Link media
+                if (media_ids && media_ids.length > 0) {
+                    const mediaPlaceholders = media_ids.map(() => '?').join(',');
+                    db.run(`UPDATE media SET campaign_id = ? WHERE id IN (${mediaPlaceholders})`, [campaignId, ...media_ids], (err) => {
+                        if (err) console.error('Failed to link media', err);
+                    });
+                }
+
+                db.run('INSERT INTO activity (type, message) VALUES (?, ?)', ['success', `Campaign "${name}" created`]);
+                res.json({ success: true, id: campaignId, recipients: recipientsCount });
+            }
+        );
+    });
 });
 
 // PUT /api/campaigns/:id
@@ -236,6 +302,60 @@ app.delete('/api/campaigns', (req, res) => {
     db.run(`DELETE FROM campaigns WHERE id IN (${placeholders})`, ids, function(err) {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ success: true, changes: this.changes });
+    });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// DASHBOARD & ACTIVITY
+// ════════════════════════════════════════════════════════════════════
+
+// GET /api/dashboard/stats
+app.get('/api/dashboard/stats', (req, res) => {
+    db.get('SELECT COUNT(*) as total FROM customers', [], (err, cust) => {
+        if (err) return res.status(500).json({ error: err.message });
+        db.get('SELECT COUNT(*) as active FROM campaigns WHERE status IN ("Sending", "Scheduled")', [], (err, active) => {
+            if (err) return res.status(500).json({ error: err.message });
+            db.get('SELECT SUM(sent) as totalSent FROM campaigns', [], (err, sent) => {
+                if (err) return res.status(500).json({ error: err.message });
+                
+                db.all('SELECT date, SUM(sent) as messages FROM campaigns GROUP BY date ORDER BY date DESC LIMIT 7', [], (err, chartRows) => {
+                    if (err) return res.status(500).json({ error: err.message });
+                    
+                    const formattedChartData = chartRows.reverse().map(row => {
+                        let dayName = row.date;
+                        try {
+                            const d = new Date(row.date);
+                            if (!isNaN(d)) {
+                                dayName = d.toLocaleDateString('en-US', { weekday: 'short' });
+                            }
+                        } catch(e) {}
+                        return { name: dayName, messages: row.messages || 0 };
+                    });
+
+                    if (formattedChartData.length === 0) {
+                        formattedChartData.push({ name: 'Today', messages: 0 });
+                    }
+
+                    res.json({
+                        totalCustomers:      String(cust.total || 0),
+                        totalCustomersGrowth: '0%',
+                        messagesSent:        String(sent.totalSent || 0),
+                        messagesSentGrowth:  '0%',
+                        deliveryRate:        '98.5%',
+                        activeCampaigns:     active.active || 0,
+                        chartData:           formattedChartData
+                    });
+                });
+            });
+        });
+    });
+});
+
+// GET /api/activity
+app.get('/api/activity', (req, res) => {
+    db.all('SELECT * FROM activity ORDER BY id DESC LIMIT 10', [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ activity: rows });
     });
 });
 
@@ -282,6 +402,10 @@ app.put('/api/settings', (req, res) => {
 // PUT /api/settings/bulk  — body: { settings: { app_name: 'X', timezone: 'Y', ... } }
 app.put('/api/settings/bulk', (req, res) => {
     const { settings } = req.body;
+    // Encrypt access_token before storing
+    if (settings.access_token && !settings.access_token.includes(':')) {
+        settings.access_token = encrypt(settings.access_token);
+    }
     const stmt = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
     Object.entries(settings).forEach(([k, v]) => stmt.run(k, v));
     stmt.finalize(err => {
@@ -424,6 +548,360 @@ app.delete('/api/media/:id', (req, res) => {
     });
 });
 
+// ════════════════════════════════════════════════════════════════════
+// WHATSAPP
+// ════════════════════════════════════════════════════════════════════
+
+// POST /api/whatsapp/test
+// Body: { token, phoneNumberId } — or reads from settings if body omitted
+app.post('/api/whatsapp/test', async (req, res) => {
+    try {
+        const getSettingAsync = (key) => new Promise((resolve, reject) => {
+            db.get('SELECT value FROM settings WHERE key = ?', [key], (err, row) => {
+                if (err) reject(err);
+                else resolve(row ? row.value : null);
+            });
+        });
+
+        // Decrypt stored token (may be encrypted)
+        const rawToken      = req.body.token         || await getSettingAsync('access_token');
+        const token         = decrypt(rawToken);
+        const phoneNumberId = req.body.phoneNumberId || await getSettingAsync('phone_id');
+
+        if (!token || !phoneNumberId) {
+            return res.status(400).json({ success: false, error: 'Missing token or phoneNumberId' });
+        }
+
+        const result = await wa.testConnection(token, phoneNumberId);
+        if (result.success) {
+            db.run('INSERT INTO activity (type, message) VALUES (?, ?)', ['success', 'WhatsApp API connection tested successfully']);
+        }
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// POST /api/whatsapp/upload-media
+// Uploads a file from the local uploads folder to Meta and returns a reusable media_id.
+// Body: { filename, mimeType }  — filename must exist in the uploads directory
+app.post('/api/whatsapp/upload-media', async (req, res) => {
+    try {
+        const { filename, mimeType } = req.body;
+        if (!filename || !mimeType) {
+            return res.status(400).json({ success: false, error: 'filename and mimeType are required' });
+        }
+
+        const filePath = path.join(UPLOADS_DIR, filename);
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({ success: false, error: 'File not found in uploads directory' });
+        }
+
+        const getSettingAsync = (key) => new Promise((resolve, reject) => {
+            db.get('SELECT value FROM settings WHERE key = ?', [key], (err, row) => {
+                if (err) reject(err);
+                else resolve(row ? row.value : null);
+            });
+        });
+
+        const token         = decrypt(await getSettingAsync('access_token'));
+        const phoneNumberId = await getSettingAsync('phone_id');
+
+        if (!token || !phoneNumberId) {
+            return res.status(400).json({ success: false, error: 'WhatsApp API credentials not configured' });
+        }
+
+        const result = await wa.uploadMedia(filePath, mimeType, token, phoneNumberId);
+
+        if (result.success) {
+            // Optionally persist the media_id alongside the media record in DB
+            db.run('UPDATE media SET mediaId = ? WHERE filename = ?', [result.mediaId, filename], (err) => {
+                if (err) console.warn('Could not store mediaId in DB (column may not exist yet):', err.message);
+            });
+            db.run('INSERT INTO activity (type, message) VALUES (?, ?)', ['info', `Media uploaded to Meta: ${filename}`]);
+        }
+
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// POST /api/campaigns/:id/send
+// Triggers actual WhatsApp sending for all Pending/Draft customers (skips Opt-out)
+app.post('/api/campaigns/:id/send', async (req, res) => {
+    const campaignId = req.params.id;
+
+    try {
+        // ── Load campaign ──────────────────────────────────────────────
+        const campaign = await new Promise((resolve, reject) => {
+            db.get('SELECT * FROM campaigns WHERE id = ?', [campaignId], (err, row) => {
+                if (err) reject(err);
+                else if (!row) reject(new Error('Campaign not found'));
+                else resolve(row);
+            });
+        });
+
+        // ── Load & decrypt API credentials from settings ───────────────
+        const settings = await new Promise((resolve, reject) => {
+            db.all('SELECT key, value FROM settings', [], (err, rows) => {
+                if (err) reject(err);
+                else {
+                    const obj = {};
+                    rows.forEach(r => { obj[r.key] = r.value; });
+                    resolve(obj);
+                }
+            });
+        });
+
+        const token         = decrypt(settings['access_token']);
+        const phoneNumberId = settings['phone_id'];
+        const delayMs       = parseInt(settings['whatsapp_delay_ms'] || '1000', 10);
+
+        if (!token || !phoneNumberId) {
+            return res.status(400).json({
+                success: false,
+                error: 'WhatsApp API credentials not configured. Go to Settings > API Connection.'
+            });
+        }
+
+        // ── Load customers — include status to skip Opt-out ────────────
+        const customers = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT cc.id as cc_id, c.id, c.name, c.phone, c.status
+                 FROM campaign_customers cc
+                 JOIN customers c ON c.id = cc.customer_id
+                 WHERE cc.campaign_id = ? AND cc.status IN ('Pending', 'Draft')`,
+                [campaignId],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        // Count non-opted-out recipients for the response
+        const activeCount = customers.filter(c => c.status !== 'Opt-out').length;
+
+        if (activeCount === 0) {
+            return res.status(400).json({ success: false, error: 'No eligible recipients (all are Opt-out or already sent).' });
+        }
+
+        // ── Load campaign media ────────────────────────────────────────
+        const media = await new Promise((resolve, reject) => {
+            db.all('SELECT * FROM media WHERE campaign_id = ?', [campaignId], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows);
+            });
+        });
+
+        // ── Optional: load template if campaign specifies one ──────────
+        const template = req.body.template || null; // { name, language, components }
+
+        // ── Mark campaign as Sending ───────────────────────────────────
+        db.run('UPDATE campaigns SET status = ? WHERE id = ?', ['Sending', campaignId]);
+        db.run('INSERT INTO activity (type, message) VALUES (?, ?)',
+            ['info', `Campaign "${campaign.name}" sending started (${activeCount} recipients, ${customers.length - activeCount} skipped)`]);
+
+        // Respond immediately — send happens in background
+        res.json({
+            success:  true,
+            message:  `Campaign started — sending to ${activeCount} recipients (${customers.length - activeCount} Opt-out skipped).`,
+            total:    activeCount,
+            skipped:  customers.length - activeCount
+        });
+
+        // ── Background send ────────────────────────────────────────────
+        wa.sendCampaign(
+            customers,
+            campaign.message,
+            media,
+            token,
+            phoneNumberId,
+            delayMs,
+            (result) => {
+                if (result.skipped) {
+                    // Mark opted-out customer as Skipped
+                    db.run(
+                        `UPDATE campaign_customers SET status = 'Skipped'
+                         WHERE campaign_id = ? AND customer_id = ?`,
+                        [campaignId, result.customerId]
+                    );
+                    return;
+                }
+
+                const status      = result.success ? 'Sent' : 'Failed';
+                const deliveredAt = result.success ? new Date().toISOString() : null;
+                const errorMsg    = result.success ? '' : (result.error || '');
+
+                db.run(
+                    `UPDATE campaign_customers
+                     SET status = ?, deliveredAt = ?, errorMessage = ?
+                     WHERE campaign_id = ? AND customer_id = ?`,
+                    [status, deliveredAt, errorMsg, campaignId, result.customerId]
+                );
+
+                if (result.success) {
+                    db.run('UPDATE campaigns SET sent = sent + 1 WHERE id = ?', [campaignId]);
+                }
+            },
+            template
+        ).then(({ sent, failed, skipped }) => {
+            const total    = sent + failed;
+            const progress = total > 0 ? Math.round((sent / total) * 100) : 0;
+            const failRate = total > 0 ? `${Math.round((failed / total) * 100)}%` : '0%';
+
+            db.run(
+                `UPDATE campaigns SET status = ?, progress = ?, deliveryFail = ? WHERE id = ?`,
+                ['Completed', progress, failRate, campaignId]
+            );
+            db.run(
+                'INSERT INTO activity (type, message) VALUES (?, ?)',
+                ['success', `Campaign "${campaign.name}" completed — ${sent} sent, ${failed} failed, ${skipped} skipped`]
+            );
+        }).catch(err => {
+            db.run('UPDATE campaigns SET status = ? WHERE id = ?', ['Draft', campaignId]);
+            db.run('INSERT INTO activity (type, message) VALUES (?, ?)', ['danger', `Campaign send error: ${err.message}`]);
+        });
+
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// GET /api/campaigns/:id/progress
+app.get('/api/campaigns/:id/progress', (req, res) => {
+    const campaignId = req.params.id;
+    db.all(
+        `SELECT status, COUNT(*) as count
+         FROM campaign_customers
+         WHERE campaign_id = ?
+         GROUP BY status`,
+        [campaignId],
+        (err, rows) => {
+            if (err) return res.status(500).json({ error: err.message });
+            const stats = { Sent: 0, Failed: 0, Pending: 0, Draft: 0, Skipped: 0 };
+            rows.forEach(r => { stats[r.status] = r.count; });
+            const total    = Object.values(stats).reduce((a, b) => a + b, 0);
+            const done     = stats.Sent + stats.Failed + stats.Skipped;
+            const progress = total > 0 ? Math.round((done / total) * 100) : 0;
+            res.json({ stats, total, progress });
+        }
+    );
+});
+
+// ════════════════════════════════════════════════════════════════════
+// TEMPLATES
+// ════════════════════════════════════════════════════════════════════
+
+// GET /api/templates
+app.get('/api/templates', (req, res) => {
+    db.all('SELECT * FROM templates ORDER BY id DESC', [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ templates: rows });
+    });
+});
+
+// POST /api/templates
+app.post('/api/templates', (req, res) => {
+    const { name, displayName, category, language, status, bodyText } = req.body;
+    db.run(
+        `INSERT INTO templates (name, displayName, category, language, status, bodyText)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [name, displayName || name, category || 'MARKETING', language || 'en_US', status || 'pending', bodyText || ''],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, id: this.lastID });
+        }
+    );
+});
+
+// PUT /api/templates/:id
+app.put('/api/templates/:id', (req, res) => {
+    const { name, displayName, category, language, status, bodyText } = req.body;
+    db.run(
+        `UPDATE templates SET name=?, displayName=?, category=?, language=?, status=?, bodyText=? WHERE id=?`,
+        [name, displayName || name, category || 'MARKETING', language || 'en_US', status || 'pending', bodyText || '', req.params.id],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, changes: this.changes });
+        }
+    );
+});
+
+// DELETE /api/templates/:id
+app.delete('/api/templates/:id', (req, res) => {
+    db.run('DELETE FROM templates WHERE id = ?', req.params.id, function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true, changes: this.changes });
+    });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// META WEBHOOK
+// ════════════════════════════════════════════════════════════════════
+
+// GET /webhook — Meta verification handshake
+// Called once when you register the webhook URL in Meta dashboard.
+app.get('/webhook', (req, res) => {
+    const mode      = req.query['hub.mode'];
+    const token     = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN || 'my_secret_verify_token';
+
+    if (mode === 'subscribe' && token === verifyToken) {
+        console.log('[Webhook] ✅ Meta verification OK');
+        res.status(200).send(challenge); // Must return challenge as plain text
+    } else {
+        console.warn('[Webhook] ❌ Verification failed — token mismatch');
+        res.status(403).json({ error: 'Forbidden — verify token mismatch' });
+    }
+});
+
+// POST /webhook — Meta sends events here (incoming messages, delivery status)
+app.post('/webhook', (req, res) => {
+    const body = req.body;
+
+    if (body.object !== 'whatsapp_business_account') return res.sendStatus(404);
+
+    // ACK immediately (Meta requires 200 within 5 seconds)
+    res.sendStatus(200);
+
+    try {
+        const entries = body.entry || [];
+        entries.forEach(entry => {
+            (entry.changes || []).forEach(change => {
+                const value    = change.value || {};
+                const messages = value.messages || [];
+                const statuses = value.statuses || [];
+
+                // ── Incoming customer messages ────────────────────────────
+                messages.forEach(msg => {
+                    const from = msg.from;
+                    const text = msg.text?.body || `[${msg.type}]`;
+                    console.log(`[Webhook] 📨 Message from ${from}: ${text}`);
+                    db.run('INSERT INTO activity (type, message) VALUES (?, ?)',
+                        ['info', `📲 Reply from ${from}: ${text.substring(0, 100)}`]);
+                });
+
+                // ── Delivery status updates ───────────────────────────────
+                statuses.forEach(status => {
+                    if (status.status === 'failed') {
+                        const errMsg = status.errors?.[0]?.title || 'Unknown error';
+                        console.warn(`[Webhook] ❌ Failed to ${status.recipient_id}: ${errMsg}`);
+                        db.run('INSERT INTO activity (type, message) VALUES (?, ?)',
+                            ['danger', `❌ Delivery failed to ${status.recipient_id}: ${errMsg}`]);
+                    }
+                    // 'sent', 'delivered', 'read' — can be logged if needed
+                });
+            });
+        });
+    } catch (err) {
+        console.error('[Webhook] Processing error:', err.message);
+    }
+});
+
 // ─── MULTER ERROR HANDLER ────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
     if (err instanceof multer.MulterError) {
@@ -462,5 +940,15 @@ app.listen(PORT, () => {
     console.log('  POST   /api/media/upload-multiple (up to 5 files)');
     console.log('  GET    /api/media  [?campaign_id=&type=]');
     console.log('  DELETE /api/media/:id');
+    console.log('  POST   /api/whatsapp/test');
+    console.log('  POST   /api/whatsapp/upload-media');
+    console.log('  POST   /api/campaigns/:id/send');
+    console.log('  GET    /api/campaigns/:id/progress');
+    console.log('  GET    /api/templates');
+    console.log('  POST   /api/templates');
+    console.log('  PUT    /api/templates/:id');
+    console.log('  DELETE /api/templates/:id');
+    console.log('  GET    /webhook           (Meta verification)');
+    console.log('  POST   /webhook           (Meta events)');
     console.log('─────────────────────────────────────────\n');
 });
