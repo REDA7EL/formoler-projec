@@ -5,11 +5,22 @@ import './History.css';
 
 const History = () => {
   const [campaigns, setCampaigns] = useState([]);
+  const [stats, setStats] = useState({
+    totalSent: 0,
+    avgOpenRate: '0%',
+    avgClickRate: '0%',
+    failedDelivery: '0%'
+  });
 
   useEffect(() => {
     fetch('http://localhost:3001/api/campaigns')
       .then(res => res.json())
       .then(data => setCampaigns(data.campaigns))
+      .catch(err => console.error(err));
+
+    fetch('http://localhost:3001/api/history/stats')
+      .then(res => res.json())
+      .then(data => setStats(data))
       .catch(err => console.error(err));
   }, []);
 
@@ -34,29 +45,29 @@ const History = () => {
           <div className="history-stat-item">
             <div className="stat-label">TOTAL SENT</div>
             <MdSend className="stat-bg-icon" />
-            <div className="stat-value">124k</div>
-            <div className="stat-growth positive">↗ 12% vs last mo</div>
+            <div className="stat-value">{stats.totalSent >= 1000 ? (stats.totalSent / 1000).toFixed(1) + 'k' : stats.totalSent}</div>
+            <div className="stat-growth positive">↗ 0% vs last mo</div>
           </div>
           
           <div className="history-stat-item">
             <div className="stat-label">AVG OPEN RATE</div>
             <MdMarkEmailRead className="stat-bg-icon" />
-            <div className="stat-value">68%</div>
-            <div className="stat-growth positive">↗ 3% vs last mo</div>
+            <div className="stat-value">{stats.avgOpenRate}</div>
+            <div className="stat-growth positive">↗ 0% vs last mo</div>
           </div>
           
           <div className="history-stat-item">
             <div className="stat-label">AVG CLICK RATE</div>
             <MdTouchApp className="stat-bg-icon" />
-            <div className="stat-value">24%</div>
+            <div className="stat-value">{stats.avgClickRate}</div>
             <div className="stat-growth neutral">→ 0% vs last mo</div>
           </div>
           
           <div className="history-stat-item">
             <div className="stat-label">FAILED DELIVERY</div>
             <MdErrorOutline className="stat-danger-icon" />
-            <div className="stat-value">1.2%</div>
-            <div className="stat-growth positive">↘ -0.5% vs last mo</div>
+            <div className="stat-value">{stats.failedDelivery}</div>
+            <div className="stat-growth positive">↘ 0% vs last mo</div>
           </div>
         </div>
 
@@ -101,36 +112,14 @@ const History = () => {
                 </tr>
               )) : (
                 <tr>
-                  <td>
-                    <div className="campaign-name">Summer Sale 2024</div>
-                    <div className="campaign-date">Sent: Oct 24, 2023 • 09:00 AM</div>
-                  </td>
-                  <td>
-                    <span className="badge badge-dark">
-                      <div className="dot"></div> Sending
-                    </span>
-                  </td>
-                  <td className="recipient-col">124,000</td>
-                  <td>
-                    <div className="perf-bars">
-                      <div className="perf-row">
-                        <span className="perf-val">68%</span>
-                        <div className="mini-bar-bg"><div className="mini-bar bg-success" style={{width: '68%'}}></div></div>
-                      </div>
-                      <div className="perf-row">
-                        <span className="perf-val">24%</span>
-                        <div className="mini-bar-bg"><div className="mini-bar bg-primary" style={{width: '24%'}}></div></div>
-                      </div>
-                    </div>
-                  </td>
-                  <td><a href="#" className="action-link">Report</a></td>
+                  <td colSpan="5" style={{textAlign: 'center', padding: '40px', color: '#9CA3AF'}}>No campaigns found in history.</td>
                 </tr>
               )}
             </tbody>
           </table>
           
           <div className="pagination">
-            <span>Showing 1-2 of 2 campaigns</span>
+            <span>Showing {campaigns.length > 0 ? 1 : 0}-{campaigns.length} of {campaigns.length} campaigns</span>
             <div className="page-controls">
               <button className="page-btn">&lt;</button>
               <button className="page-btn active">1</button>

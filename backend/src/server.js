@@ -365,13 +365,31 @@ app.get('/api/activity', (req, res) => {
 
 // GET /api/history/stats
 app.get('/api/history/stats', (req, res) => {
-    db.get('SELECT SUM(sent) as totalSent, COUNT(*) as total FROM campaigns', [], (err, row) => {
+    db.all('SELECT sent, openRate, clickRate, deliveryFail FROM campaigns', [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
+        
+        let totalSent = 0;
+        let sumOpen = 0;
+        let sumClick = 0;
+        let sumFail = 0;
+        const total = rows.length;
+
+        rows.forEach(r => {
+            totalSent += (r.sent || 0);
+            sumOpen += parseFloat(r.openRate) || 0;
+            sumClick += parseFloat(r.clickRate) || 0;
+            sumFail += parseFloat(r.deliveryFail) || 0;
+        });
+
+        const avgOpenRate = total > 0 ? (sumOpen / total).toFixed(0) + '%' : '0%';
+        const avgClickRate = total > 0 ? (sumClick / total).toFixed(0) + '%' : '0%';
+        const failedDelivery = total > 0 ? (sumFail / total).toFixed(1) + '%' : '0%';
+
         res.json({
-            totalSent:   row.totalSent  || 0,
-            avgOpenRate: '68%',
-            avgClickRate: '24%',
-            failedDelivery: '1.2%'
+            totalSent,
+            avgOpenRate,
+            avgClickRate,
+            failedDelivery
         });
     });
 });

@@ -171,13 +171,7 @@ function initDb() {
         });
 
         db.get("SELECT COUNT(*) as count FROM customers", (err, row) => {
-            if (row && row.count === 0) {
-                const stmt = db.prepare(`INSERT INTO customers (name, phone, email, status, tags, dateAdded) VALUES (?, ?, ?, ?, ?, ?)`);
-                stmt.run("John Doe",     "+1 (555) 123-4567", "john@example.com",  "Active",  "VIP",      "Oct 24, 2023");
-                stmt.run("Alice Smith",  "+44 7700 900077",   "alice@example.com", "Opt-out", "",         "Oct 22, 2023");
-                stmt.run("Robert Jones", "+1 (555) 987-6543", "rob@example.com",   "Active",  "Customer", "Oct 20, 2023");
-                stmt.finalize();
-            }
+            // Leave customers empty — no fake data
         });
 
         db.get("SELECT COUNT(*) as count FROM campaigns", (err, row) => {
