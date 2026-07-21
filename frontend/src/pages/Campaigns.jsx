@@ -87,27 +87,8 @@ const Campaigns = () => {
   };
 
   // Duplicate Logic
-  const handleDuplicate = async (campaign) => {
-    try {
-      await fetch('http://localhost:3001/api/campaigns', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: `${campaign.name} (Copy)`,
-          message: campaign.message,
-          status: 'Draft',
-          progress: 0,
-          sent: 0,
-          openRate: '0%',
-          clickRate: '0%',
-          deliveryFail: '0%',
-          recipients: campaign.recipients
-        })
-      });
-      fetchCampaigns();
-    } catch (err) {
-      console.error("Failed to duplicate", err);
-    }
+  const handleDuplicate = (campaign) => {
+    navigate('/campaigns/new', { state: { duplicate: campaign } });
   };
 
   // Send Campaign via WhatsApp API - Trigger Modal

@@ -1,16 +1,21 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MdOutlineMailOutline, MdLockOutline, MdVisibilityOff, MdOutlineCampaign } from 'react-icons/md';
+import { MdOutlineMailOutline, MdLockOutline, MdVisibilityOff, MdVisibility, MdOutlineCampaign, MdAdminPanelSettings, MdPerson } from 'react-icons/md';
 import './Login.css';
 
 const Login = () => {
   const navigate = useNavigate();
-  const [email, setEmail] = useState('admin@company.com');
-  const [password, setPassword] = useState('password123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    setError('');
+    setIsLoading(true);
+
     try {
       const response = await fetch('http://localhost:3001/api/login', {
         method: 'POST',
@@ -20,19 +25,22 @@ const Login = () => {
       
       const data = await response.json();
       if (data.success) {
+        const user = data.user;
+        localStorage.setItem('user', JSON.stringify(user));
         navigate('/');
       } else {
-        setError(data.message || 'Login failed');
+        setError(data.message || 'Email ou mot de passe incorrect.');
       }
     } catch (err) {
-      // For development when backend is not running
-      console.warn("Backend not reachable, logging in anyway for demo purposes", err);
-      navigate('/');
+      setError('Impossible de contacter le serveur. Vérifiez la connexion.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
     <div className="login-container">
+      {/* Left Hero Panel */}
       <div className="login-hero">
         <div className="hero-content">
           <div className="hero-brand">
@@ -44,66 +52,54 @@ const Login = () => {
         </div>
       </div>
       
+      {/* Right Form Panel */}
       <div className="login-form-container">
         <div className="login-box">
-          <h2 className="login-heading">Welcome Back</h2>
-          <p className="login-subheading">Sign in to your campaign manager account.</p>
+
+          <h2 className="login-heading">Bienvenue</h2>
+          <p className="login-subheading">Connectez-vous à votre compte.</p>
           
           {error && <div className="error-message">{error}</div>}
           
           <form onSubmit={handleLogin}>
             <div className="form-group">
-              <label>EMAIL ADDRESS</label>
+              <label>ADRESSE EMAIL</label>
               <div className="input-wrapper">
                 <MdOutlineMailOutline className="input-icon" />
-                <input 
-                  type="email" 
-                  className="input" 
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="votre@email.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  required 
+                  required
                 />
               </div>
             </div>
             
             <div className="form-group">
-              <div className="label-row">
-                <label>PASSWORD</label>
-                <a href="#" className="forgot-link">Forgot Password?</a>
-              </div>
+              <label>MOT DE PASSE</label>
               <div className="input-wrapper">
                 <MdLockOutline className="input-icon" />
-                <input 
-                  type="password" 
-                  className="input" 
+                <input
+                  type={showPass ? 'text' : 'password'}
+                  className="input"
+                  placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  required 
+                  required
                 />
-                <MdVisibilityOff className="input-icon-right" />
+                <span className="input-icon-right" onClick={() => setShowPass(!showPass)} style={{cursor:'pointer'}}>
+                  {showPass ? <MdVisibility /> : <MdVisibilityOff />}
+                </span>
               </div>
             </div>
             
-            <div className="form-checkbox">
-              <input type="checkbox" id="remember" />
-              <label htmlFor="remember">Remember me for 30 days</label>
-            </div>
-            
-            <button type="submit" className="btn btn-primary btn-full login-btn">Login</button>
+            <button type="submit" className="btn btn-primary btn-full login-btn" disabled={isLoading}>
+              {isLoading ? 'Connexion...' : 'Se Connecter'}
+            </button>
           </form>
-          
-          <div className="divider">
-            <span>OR CONTINUE WITH</span>
-          </div>
-          
-          <div className="sso-buttons">
-            <button className="btn btn-secondary btn-full"><MdOutlineMailOutline /> SSO</button>
-            <button className="btn btn-secondary btn-full"><MdLockOutline /> Passkey</button>
-          </div>
-          
-          <div className="login-footer">
-            Don't have an account? <a href="#">Contact Sales</a>
-          </div>
+
         </div>
       </div>
     </div>

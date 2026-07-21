@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
-import { MdFilterList, MdSend, MdMarkEmailRead, MdTouchApp, MdErrorOutline } from 'react-icons/md';
+import { MdFilterList, MdSend, MdMarkEmailRead, MdTouchApp, MdErrorOutline, MdClose } from 'react-icons/md';
 import './History.css';
 
 const History = () => {
@@ -11,6 +12,8 @@ const History = () => {
     avgClickRate: '0%',
     failedDelivery: '0%'
   });
+  const [selectedReport, setSelectedReport] = useState(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     fetch('http://localhost:3001/api/campaigns')
@@ -108,7 +111,12 @@ const History = () => {
                       </div>
                     </div>
                   </td>
-                  <td><a href="#" className="action-link">{camp.status === 'Scheduled' ? 'Edit' : 'Report'}</a></td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                      {camp.status !== 'Scheduled' && <button className="action-link" style={{ background:'none', border:'none', cursor:'pointer' }} onClick={() => setSelectedReport(camp)}>Report</button>}
+                      <button className="action-link" style={{ background:'none', border:'none', cursor:'pointer', color:'#9CA3AF' }} onClick={() => navigate('/campaigns/new', { state: { duplicate: camp } })}>Dupliquer</button>
+                    </div>
+                  </td>
                 </tr>
               )) : (
                 <tr>
@@ -128,6 +136,53 @@ const History = () => {
           </div>
         </div>
       </div>
+
+      {/* Campaign Report Modal */}
+      {selectedReport && (
+        <div className="modal-overlay" style={{ position: 'fixed', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex: 1000 }}>
+          <div className="modal-content card" style={{ width: '500px', padding: 0 }}>
+            <div className="modal-header" style={{ padding: '20px', borderBottom: '1px solid #334155', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0 }}>Campaign Report: {selectedReport.name}</h3>
+              <button className="icon-btn" onClick={() => setSelectedReport(null)}><MdClose /></button>
+            </div>
+            <div className="modal-body" style={{ padding: '24px' }}>
+              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'16px' }}>
+                <span style={{ color:'#9CA3AF' }}>Status</span>
+                <span className={`badge badge-${selectedReport.status === 'Completed' ? 'success' : 'warning'}`}>{selectedReport.status}</span>
+              </div>
+              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'16px' }}>
+                <span style={{ color:'#9CA3AF' }}>Date</span>
+                <span style={{ color:'#fff' }}>{selectedReport.date}</span>
+              </div>
+              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'16px' }}>
+                <span style={{ color:'#9CA3AF' }}>Recipients targeted</span>
+                <span style={{ color:'#fff' }}>{selectedReport.recipients}</span>
+              </div>
+              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'16px' }}>
+                <span style={{ color:'#9CA3AF' }}>Messages Sent</span>
+                <span style={{ color:'#fff' }}>{selectedReport.sent}</span>
+              </div>
+              
+              <hr style={{ borderColor: '#334155', margin: '20px 0' }} />
+              
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'16px' }}>
+                <div style={{ background:'#1E293B', padding:'16px', borderRadius:'8px', textAlign:'center' }}>
+                  <div style={{ fontSize:'24px', fontWeight:'bold', color:'#10B981' }}>{selectedReport.openRate}</div>
+                  <div style={{ fontSize:'12px', color:'#9CA3AF', marginTop:'4px' }}>Open Rate</div>
+                </div>
+                <div style={{ background:'#1E293B', padding:'16px', borderRadius:'8px', textAlign:'center' }}>
+                  <div style={{ fontSize:'24px', fontWeight:'bold', color:'#3B82F6' }}>{selectedReport.clickRate}</div>
+                  <div style={{ fontSize:'12px', color:'#9CA3AF', marginTop:'4px' }}>Click Rate</div>
+                </div>
+                <div style={{ background:'#1E293B', padding:'16px', borderRadius:'8px', textAlign:'center', gridColumn:'span 2' }}>
+                  <div style={{ fontSize:'20px', fontWeight:'bold', color:'#EF4444' }}>{selectedReport.deliveryFail}</div>
+                  <div style={{ fontSize:'12px', color:'#9CA3AF', marginTop:'4px' }}>Failed Delivery Rate</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

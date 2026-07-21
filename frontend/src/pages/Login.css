@@ -223,3 +223,76 @@
   font-size: 14px;
   color: var(--text-muted);
 }
+
+/* ── Mode Switcher ────────────────────────────────────────────── */
+.login-mode-switcher {
+  display: flex;
+  background-color: var(--bg-dark);
+  border-radius: 10px;
+  padding: 4px;
+  gap: 4px;
+  margin-bottom: 28px;
+  border: 1px solid var(--border-color);
+}
+
+.mode-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--text-muted);
+  transition: all 0.2s ease;
+}
+
+.mode-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255,255,255,0.05);
+}
+
+.mode-btn.active {
+  background-color: var(--accent-primary);
+  color: #fff;
+  box-shadow: 0 2px 12px rgba(16, 185, 129, 0.35);
+}
+
+.mode-btn.active.dev {
+  background-color: #F59E0B;
+  box-shadow: 0 2px 12px rgba(245, 158, 11, 0.35);
+}
+
+/* ── Dev Badge ─────────────────────────────────────────────────── */
+.dev-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #F59E0B;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 20px;
+}
+
+/* ── Dev Button ─────────────────────────────────────────────────── */
+.btn-dev {
+  background: linear-gradient(135deg, #F59E0B, #D97706);
+  color: #fff;
+  border: none;
+  box-shadow: 0 4px 14px rgba(245, 158, 11, 0.35);
+}
+
+.btn-dev:hover {
+  background: linear-gradient(135deg, #FBBF24, #F59E0B);
+  box-shadow: 0 6px 20px rgba(245, 158, 11, 0.5);
+  transform: translateY(-1px);
+}

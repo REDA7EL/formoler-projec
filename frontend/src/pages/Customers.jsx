@@ -204,6 +204,32 @@ const Customers = () => {
     reader.readAsArrayBuffer(file);
   };
 
+  const handleExportCSV = () => {
+    if (filteredCustomers.length === 0) return showToast('error', 'Aucun client à exporter.');
+    
+    const headers = ['Name', 'Phone', 'Status', 'Date Added'];
+    const rows = filteredCustomers.map(c => [
+      `"${(c.name || '').replace(/"/g, '""')}"`,
+      `"${(c.phone || '').replace(/"/g, '""')}"`,
+      `"${c.status || ''}"`,
+      `"${c.dateAdded || ''}"`
+    ]);
+    
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(r => r.join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'customers_export.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="customers-page">
       <div className="page-header header-with-actions">
@@ -230,6 +256,9 @@ const Customers = () => {
             disabled={importing}
           >
             <MdFileDownload /> {importing ? 'Importing…' : 'Import CSV'}
+          </button>
+          <button className="btn btn-secondary" onClick={handleExportCSV}>
+            <MdFileDownload /> Export CSV
           </button>
           <button className="btn btn-primary" onClick={openAddModal}><MdPersonAdd /> Add Customer</button>
         </div>

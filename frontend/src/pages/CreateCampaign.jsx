@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import Header from '../components/Header';
 import { 
   MdFormatBold, MdFormatItalic, MdFormatStrikethrough, MdEmojiEmotions, 
@@ -10,14 +10,29 @@ import EmojiPicker from 'emoji-picker-react';
 import './CreateCampaign.css';
 
 const CreateCampaign = () => {
-  const [campaignName, setCampaignName] = useState('');
-  const [message, setMessage] = useState('');
+  const location = useLocation();
+  const duplicateCamp = location.state?.duplicate;
+
+  const [campaignName, setCampaignName] = useState(duplicateCamp ? `${duplicateCamp.name} (Copy)` : '');
+  const [message, setMessage] = useState(duplicateCamp ? duplicateCamp.message : '');
   const [targetAudience, setTargetAudience] = useState('All');
+  const [scheduledAt, setScheduledAt] = useState('');
   const [uploadedMedia, setUploadedMedia] = useState([]);  // { type, name, url, preview }
   const [uploading, setUploading] = useState(null);        // 'image' | 'video' | 'audio' | null
   const [uploadError, setUploadError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [customersList, setCustomersList] = useState([]);
+  const [selectedCustomerIds, setSelectedCustomerIds] = useState([]);
+
+  useEffect(() => {
+    fetch('http://localhost:3001/api/customers?status=Active')
+      .then(res => res.json())
+      .then(data => {
+        if (data.customers) setCustomersList(data.customers);
+      })
+      .catch(console.error);
+  }, []);
 
   const navigate = useNavigate();
 
@@ -85,9 +100,11 @@ const CreateCampaign = () => {
         body: JSON.stringify({
           name: campaignName,
           message,
-          status,
+          status: scheduledAt && status !== 'Draft' ? 'Scheduled' : status,
           target_audience: targetAudience,
-          media_ids
+          specific_customer_ids: selectedCustomerIds,
+          media_ids,
+          scheduledAt: scheduledAt || null
         })
       });
       const data = await res.json();
@@ -193,7 +210,40 @@ const CreateCampaign = () => {
                   <option value="All">All Active Customers</option>
                   <option value="Tag:VIP">Tag: VIP</option>
                   <option value="Tag:Customer">Tag: Customer</option>
+                  <option value="Specific">Sélectionner des clients spécifiques</option>
                 </select>
+              </div>
+              
+              {targetAudience === 'Specific' && (
+                <div className="specific-customers-list mt-2" style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '10px' }}>
+                  {customersList.length === 0 ? (
+                    <p style={{ color: 'var(--text-secondary)' }}>Aucun client actif trouvé.</p>
+                  ) : (
+                    customersList.map(c => (
+                      <label key={c.id} style={{ display: 'flex', alignItems: 'center', marginBottom: '8px', cursor: 'pointer', color: 'var(--text-color)' }}>
+                        <input 
+                          type="checkbox" 
+                          style={{ marginRight: '10px', width: '18px', height: '18px', accentColor: 'var(--primary-color)' }}
+                          checked={selectedCustomerIds.includes(c.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) setSelectedCustomerIds([...selectedCustomerIds, c.id]);
+                            else setSelectedCustomerIds(selectedCustomerIds.filter(id => id !== c.id));
+                          }}
+                        />
+                        {c.name || 'Sans Nom'} ({c.phone})
+                      </label>
+                    ))
+                  )}
+                </div>
+              )}
+              <div className="form-group mt-4">
+                <label>Schedule (Optionnel)</label>
+                <input 
+                  type="datetime-local" 
+                  className="input" 
+                  value={scheduledAt}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                />
               </div>
             </div>
 
@@ -400,7 +450,7 @@ const CreateCampaign = () => {
           onClick={() => handleSave('Sending')}
           disabled={isSaving}
         >
-          <MdSend /> {isSaving ? 'Sending...' : 'Send Campaign'}
+          <MdSend /> {isSaving ? 'En cours...' : (scheduledAt ? 'Programmer la campagne' : 'Envoyer la campagne')}
         </button>
       </div>
     </div>

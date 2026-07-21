@@ -67,6 +67,36 @@ app.post('/api/login', (req, res) => {
     });
 });
 
+// PUT /api/users/password
+app.put('/api/users/password', (req, res) => {
+    const { userId, currentPassword, newPassword } = req.body;
+    
+    // First verify current password
+    db.get('SELECT * FROM users WHERE id = ? AND password = ?', [userId, currentPassword], (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!row) return res.status(401).json({ success: false, message: 'Incorrect current password' });
+        
+        // Update to new password
+        db.run('UPDATE users SET password = ? WHERE id = ?', [newPassword, userId], function(updateErr) {
+            if (updateErr) return res.status(500).json({ error: updateErr.message });
+            res.json({ success: true, message: 'Password updated successfully' });
+        });
+    });
+});
+
+// PUT /api/users/profile
+app.put('/api/users/profile', (req, res) => {
+    const { userId, name, email } = req.body;
+    db.run(
+        'UPDATE users SET name = ?, email = ? WHERE id = ?',
+        [name, email, userId],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, message: 'Profile updated successfully', user: { id: userId, name, email } });
+        }
+    );
+});
+
 // ════════════════════════════════════════════════════════════════════
 // DASHBOARD
 // ════════════════════════════════════════════════════════════════════
@@ -75,18 +105,26 @@ app.post('/api/login', (req, res) => {
 app.get('/api/dashboard/stats', (req, res) => {
     db.get('SELECT COUNT(*) as total FROM customers', [], (err, cust) => {
         if (err) return res.status(500).json({ error: err.message });
-        db.get('SELECT COUNT(*) as active FROM campaigns WHERE status = "Sending"', [], (err, active) => {
+        db.get('SELECT COUNT(*) as active FROM campaigns WHERE status IN ("Sending", "Scheduled")', [], (err, active) => {
             if (err) return res.status(500).json({ error: err.message });
             db.get('SELECT SUM(sent) as totalSent FROM campaigns', [], (err, sent) => {
                 if (err) return res.status(500).json({ error: err.message });
-                res.json({
-                    totalCustomers:      String(cust.total || 0),
-                    totalCustomersGrowth: '0%',
-                    messagesSent:        String(sent.totalSent || 0),
-                    messagesSentGrowth:  '0%',
-                    deliveryRate:        '0%',
-                    activeCampaigns:     active.active || 0,
-                    chartData: [45, 65, 40, 50, 75, 60, 90, 100, 70, 85, 110]
+                
+                db.all('SELECT date as name, SUM(sent) as messages FROM campaigns GROUP BY date ORDER BY id DESC LIMIT 7', [], (err, chartRows) => {
+                    if (err) return res.status(500).json({ error: err.message });
+                    
+                    // reverse to get chronological order for chart
+                    const chartData = chartRows.length > 0 ? chartRows.reverse() : [{name: 'Aucun', messages: 0}];
+
+                    res.json({
+                        totalCustomers:      String(cust.total || 0),
+                        totalCustomersGrowth: '0%',
+                        messagesSent:        String(sent.totalSent || 0),
+                        messagesSentGrowth:  '0%',
+                        deliveryRate:        '0%',
+                        activeCampaigns:     active.active || 0,
+                        chartData:           chartData
+                    });
                 });
             });
         });
@@ -219,14 +257,18 @@ app.get('/api/campaigns/:id', (req, res) => {
 
 // POST /api/campaigns
 app.post('/api/campaigns', (req, res) => {
-    const { name, message, status, target_audience, media_ids } = req.body;
+    const { name, message, status, target_audience, media_ids, scheduledAt, specific_customer_ids } = req.body;
     const date = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     
     // First, determine recipients count based on target_audience
     let customerSql = 'SELECT id FROM customers WHERE status = "Active"';
     let customerArgs = [];
     
-    if (target_audience && target_audience.startsWith('Tag:')) {
+    if (target_audience === 'Specific' && specific_customer_ids && specific_customer_ids.length > 0) {
+        const placeholders = specific_customer_ids.map(() => '?').join(',');
+        customerSql = `SELECT id FROM customers WHERE id IN (${placeholders})`;
+        customerArgs = specific_customer_ids;
+    } else if (target_audience && target_audience.startsWith('Tag:')) {
         const tag = target_audience.replace('Tag:', '').trim();
         customerSql += ' AND tags LIKE ?';
         customerArgs.push(`%${tag}%`);
@@ -239,9 +281,9 @@ app.post('/api/campaigns', (req, res) => {
 
         // Insert Campaign
         db.run(
-            `INSERT INTO campaigns (name, message, status, progress, sent, openRate, clickRate, deliveryFail, recipients, date)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [name, message || '', status || 'Draft', 0, 0, '0%', '0%', '0%', recipientsCount, date],
+            `INSERT INTO campaigns (name, message, status, progress, sent, openRate, clickRate, deliveryFail, recipients, date, scheduledAt)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [name, message || '', status || 'Draft', 0, 0, '0%', '0%', '0%', recipientsCount, date, scheduledAt || null],
             function(err) {
                 if (err) return res.status(500).json({ error: err.message });
                 const campaignId = this.lastID;
@@ -275,10 +317,10 @@ app.post('/api/campaigns', (req, res) => {
 
 // PUT /api/campaigns/:id
 app.put('/api/campaigns/:id', (req, res) => {
-    const { name, message, status, progress, sent, openRate, clickRate, deliveryFail, recipients } = req.body;
+    const { name, message, status, progress, sent, openRate, clickRate, deliveryFail, recipients, scheduledAt } = req.body;
     db.run(
-        `UPDATE campaigns SET name=?, message=?, status=?, progress=?, sent=?, openRate=?, clickRate=?, deliveryFail=?, recipients=? WHERE id=?`,
-        [name, message || '', status, progress || 0, sent || 0, openRate || '0%', clickRate || '0%', deliveryFail || '0%', recipients || 0, req.params.id],
+        `UPDATE campaigns SET name=?, message=?, status=?, progress=?, sent=?, openRate=?, clickRate=?, deliveryFail=?, recipients=?, scheduledAt=? WHERE id=?`,
+        [name, message || '', status, progress || 0, sent || 0, openRate || '0%', clickRate || '0%', deliveryFail || '0%', recipients || 0, scheduledAt || null, req.params.id],
         function(err) {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ success: true, changes: this.changes });

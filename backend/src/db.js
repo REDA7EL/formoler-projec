@@ -70,7 +70,9 @@ function initDb() {
             )
         `);
 
-        // ─── CUSTOMERS TABLE ─────────────────────────────────────────
+        // Fallback for existing databases
+        db.run("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'Administrator'", () => {});
+        db.run("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'Active'", () => {});
         db.run(`
             CREATE TABLE IF NOT EXISTS customers (
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,10 +98,14 @@ function initDb() {
                 clickRate    TEXT    DEFAULT '0%',
                 deliveryFail TEXT    DEFAULT '0%',
                 recipients   INTEGER DEFAULT 0,
-                date         TEXT    DEFAULT (date('now'))
+                date         TEXT    DEFAULT (date('now')),
+                scheduledAt  TEXT    NULL
             )
         `);
-
+        // Add column safely if table already existed
+        db.run(`ALTER TABLE campaigns ADD COLUMN scheduledAt TEXT NULL`, (err) => {});
+        db.run(`ALTER TABLE campaigns ADD COLUMN message TEXT DEFAULT ''`, (err) => {});
+        db.run(`ALTER TABLE campaigns ADD COLUMN recipients INTEGER DEFAULT 0`, (err) => {});
         // ─── MEDIA TABLE ──────────────────────────────────────────────
         db.run(`
             CREATE TABLE IF NOT EXISTS media (
@@ -163,10 +169,19 @@ function initDb() {
         `);
 
         // ─── SEED DEFAULT DATA ────────────────────────────────────────
+        // Create Client Admin
         db.get("SELECT * FROM users WHERE email = 'admin@company.com'", (err, row) => {
             if (!row) {
                 db.run(`INSERT INTO users (name, email, password, role, status)
-                        VALUES ('Admin', 'admin@company.com', 'password123', 'Administrator', 'Active')`);
+                        VALUES ('Admin Client', 'admin@company.com', 'password123', 'Administrator', 'Active')`);
+            }
+        });
+        
+        // Create Developer
+        db.get("SELECT * FROM users WHERE email = 'devlop@api.com'", (err, row) => {
+            if (!row) {
+                db.run(`INSERT INTO users (name, email, password, role, status)
+                        VALUES ('Developer', 'devlop@api.com', 'password123', 'Developer', 'Active')`);
             }
         });
 
