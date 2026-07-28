@@ -196,22 +196,38 @@ function initDb() {
         db.get("SELECT COUNT(*) as count FROM settings", (err, row) => {
             if (row && row.count === 0) {
                 const defaults = [
-                    ['app_name',          'WhatsApp Campaign Manager'],
-                    ['timezone',          'UTC+01:00'],
-                    ['language',          'English'],
-                    ['access_token',      encrypt('EAAOl7ZA6qZBHgBO7yZC...')],
-                    ['phone_id',          '102938475610293'],
-                    ['business_id',       '883746291038475'],
-                    ['webhook_url',       'https://api.yourdomain.com/v1/whatsapp/webhook'],
-                    ['webhook_token',     'secret_token_12345'],
-                    ['two_factor',        'false'],
-                    ['whatsapp_delay_ms', '1000'],
+                    ['app_name',             'WhatsApp Campaign Manager'],
+                    ['timezone',             'UTC+01:00'],
+                    ['language',             'English'],
+                    ['two_factor',           'false'],
+                    ['delayBetweenMessages', '20000'],
+                    ['maximumDelayBetweenMessages', '45000'],
+                    ['maxMessagesPerDay',    '300'],
+                    ['dailySentCount',       '0'],
+                    ['dailySentDate',        ''],
                 ];
                 const stmt = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)");
                 defaults.forEach(([k, v]) => stmt.run(k, v));
                 stmt.finalize();
             }
         });
+
+        // ── Migrations for existing databases ───────────────────────────────────
+        
+        // Ensure new settings exist in older databases
+        db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('maxMessagesPerDay', '300')");
+        db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('dailySentCount', '0')");
+        db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('dailySentDate', '')");
+        db.run("INSERT OR IGNORE INTO settings (key, value) VALUES ('maximumDelayBetweenMessages', '45000')");
+        // Remove credentials and webhook values from retired Cloud/API providers.
+        db.run("DELETE FROM settings WHERE key IN ('access_token', 'phone_id', 'business_id', 'apiUrl', 'idInstance', 'apiTokenInstance', 'webhook_url', 'webhook_token')");
+
+        // ── Migration: update existing DBs from the old 1000ms default ──────────
+        // Runs on every server start but only changes the value if it is still
+        // the factory default (1000). Any custom value is left unchanged.
+        db.run(
+            "UPDATE settings SET value = '20000' WHERE key = 'delayBetweenMessages' AND value = '1000'"
+        );
 
         // Seed one example template
         db.get("SELECT COUNT(*) as count FROM templates", (err, row) => {
@@ -236,4 +252,3 @@ function initDb() {
 }
 
 module.exports = { db, encrypt, decrypt };
-

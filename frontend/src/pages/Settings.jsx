@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import Header from '../components/Header';
+import WhatsAppConnection from '../components/WhatsAppConnection';
 import { 
   MdVpnKey, MdWebhook, MdPeople, MdVisibilityOff, MdVisibility, 
-  MdSync, MdAdd, MdClose, MdSettings, MdLock, MdDelete, MdEdit, MdSave, MdCheckCircle, MdError
+  MdSync, MdAdd, MdClose, MdSettings, MdLock, MdDelete, MdSave, MdCheckCircle, MdError
 } from 'react-icons/md';
 import './Settings.css';
 
@@ -686,9 +687,7 @@ const Settings = () => {
   // Get logged-in user role from localStorage
   const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
   const isDev = currentUser.role === 'Developer';
-  const isAdmin = currentUser.role === 'Administrator';
-
-  const [activeTab, setActiveTab] = useState(isDev ? 'api' : 'general');
+  const [activeTab, setActiveTab] = useState(() => isDev && new URLSearchParams(window.location.search).get('tab') === 'connection' ? 'connection' : isDev ? 'connection' : 'general');
   const [isAddUserModalOpen, setIsAddUserModalOpen] = useState(false);
   const [teamRefreshKey, setTeamRefreshKey] = useState(0);
 
@@ -731,7 +730,7 @@ const Settings = () => {
   // Visibility rules
   const allTabs = [
     { id: 'general', label: 'Général', visibleTo: ['Administrator'] },
-    { id: 'api', label: 'API WhatsApp', visibleTo: ['Developer'] },
+    { id: 'connection', label: 'WhatsApp Connection', visibleTo: ['Developer'] },
     { id: 'theme', label: 'Apparence', visibleTo: ['Developer'] },
     { id: 'team', label: 'Équipe', visibleTo: ['Administrator'] },
     { id: 'profile', label: 'Profil', visibleTo: ['Administrator', 'Developer', 'Viewer'] },
@@ -761,8 +760,8 @@ const Settings = () => {
         
         <div className="settings-content">
           {activeTab === 'general' && <GeneralTab />}
-          {activeTab === 'api' && isDev && <ApiTab />}
-          {activeTab === 'theme' && <ThemeTab />}
+          {activeTab === 'connection' && isDev && <WhatsAppConnection />}
+          {activeTab === 'theme' && isDev && <ThemeTab />}
           {activeTab === 'team' && <TeamTab openAddUser={() => { setAddMsg(null); setIsAddUserModalOpen(true); }} refreshKey={teamRefreshKey} />}
           {activeTab === 'profile' && <ProfileTab />}
           {activeTab === 'security' && <SecurityTab />}

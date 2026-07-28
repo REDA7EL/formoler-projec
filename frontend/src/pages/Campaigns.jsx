@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import Header from '../components/Header';
-import { MdSearch, MdFilterList, MdAdd, MdEdit, MdDelete, MdClose, MdContentCopy, MdSend, MdSync } from 'react-icons/md';
+import { MdSearch, MdAdd, MdEdit, MdDelete, MdClose, MdContentCopy, MdSend, MdSync } from 'react-icons/md';
 import './Campaigns.css';
 
 const Campaigns = () => {
@@ -20,7 +19,7 @@ const Campaigns = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({ id: null, name: '', status: 'Draft' });
 
-  const fetchCampaigns = () => {
+  const fetchCampaigns = useCallback(() => {
     let url = 'http://localhost:3001/api/campaigns';
     const params = new URLSearchParams();
     if (search) params.append('search', search);
@@ -33,11 +32,11 @@ const Campaigns = () => {
         if (data.campaigns) setCampaigns(data.campaigns);
       })
       .catch(err => console.error(err));
-  };
+  }, [search, statusFilter]);
 
   useEffect(() => {
     fetchCampaigns();
-  }, [search, statusFilter]);
+  }, [fetchCampaigns]);
 
   // Selection Logic
   const handleSelectAll = (e) => {
@@ -338,7 +337,7 @@ const Campaigns = () => {
             <div className="modal-body" style={{ padding: '20px' }}>
               <p>Are you sure you want to send <strong>"{confirmModal.campaign?.name}"</strong> to all active recipients?</p>
               <div style={{ marginTop: '15px', padding: '10px', backgroundColor: '#fef2f2', borderRadius: '6px', border: '1px solid #fecaca', color: '#b91c1c', fontSize: '13px' }}>
-                <strong>⚠ Warning:</strong> Sending marketing messages via Meta Cloud API incurs a cost per message. There is no free tier for marketing templates.
+                <strong>⚠ Warning:</strong> Send only to recipients who have consented to receive your WhatsApp messages.
               </div>
             </div>
             <div className="modal-footer">

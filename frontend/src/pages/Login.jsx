@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MdOutlineMailOutline, MdLockOutline, MdVisibilityOff, MdVisibility, MdOutlineCampaign, MdAdminPanelSettings, MdPerson } from 'react-icons/md';
+import { MdOutlineMailOutline, MdLockOutline, MdVisibilityOff, MdVisibility, MdOutlineCampaign } from 'react-icons/md';
 import './Login.css';
 
 const Login = () => {
@@ -27,6 +27,7 @@ const Login = () => {
       if (data.success) {
         const user = data.user;
         localStorage.setItem('user', JSON.stringify(user));
+        localStorage.setItem('sessionToken', data.token);
         navigate('/');
       } else {
         setError(data.message || 'Email ou mot de passe incorrect.');
@@ -67,7 +68,7 @@ const Login = () => {
               <div className="input-wrapper">
                 <MdOutlineMailOutline className="input-icon" />
                 <input
-                  type="text"
+                  type="email"
                   className="input"
                   placeholder="votre@email.com"
                   value={email}

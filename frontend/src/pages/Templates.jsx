@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import Header from '../components/Header';
-import { MdAdd, MdClose, MdDelete, MdContentCopy } from 'react-icons/md';
+import { MdAdd, MdClose, MdDelete } from 'react-icons/md';
 
 const Templates = () => {
   const [templates, setTemplates] = useState([]);

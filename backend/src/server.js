@@ -6,8 +6,8 @@ const path    = require('path');
 const fs      = require('fs');
 const multer  = require('multer');
 const { v4: uuidv4 } = require('uuid');
-const { db, encrypt, decrypt } = require('./db');
-const wa      = require('./whatsapp');
+const { db } = require('./db');
+const wa      = require('./whatsapp-web');
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -53,6 +53,66 @@ const upload = multer({
 app.use(cors());
 app.use(express.json());
 
+// Local Electron sessions. The token is issued at login and required for all
+// WhatsApp Web connection operations; role claims from the browser are never trusted.
+const sessions = new Map();
+const requireDeveloper = (req, res, next) => {
+    const token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
+    const session = token && sessions.get(token);
+    if (!session) return res.status(401).json({ error: 'Authentication required.' });
+    if (session.role !== 'Developer') return res.status(403).json({ error: 'Developer role required.' });
+    req.user = session;
+    next();
+};
+
+// WhatsApp Web connection API.  Both root paths and /api/whatsapp aliases are
+// available so Electron and external local integrations share one client.
+const connectionStatus = (_req, res) => res.json(wa.getStatus());
+const connectionQr = async (_req, res) => {
+    try { await wa.initialize(); res.json(wa.getStatus()); }
+    catch (error) { res.status(503).json({ ...wa.getStatus(), error: error.message }); }
+};
+const disconnectWhatsApp = async (_req, res) => {
+    try { res.json(await wa.disconnect()); }
+    catch (error) { res.status(500).json({ success: false, error: error.message }); }
+};
+const sendMessage = async (req, res) => {
+    try {
+        const { phone, message } = req.body;
+        if (!phone || !message) return res.status(400).json({ success: false, error: 'phone and message are required' });
+        res.json(await wa.sendTextMessage(phone, message));
+    } catch (error) { res.status(400).json({ success: false, error: error.message }); }
+};
+['/status', '/api/whatsapp/status'].forEach(route => app.get(route, requireDeveloper, connectionStatus));
+['/qr', '/api/whatsapp/qr'].forEach(route => app.get(route, requireDeveloper, connectionQr));
+['/disconnect', '/api/whatsapp/disconnect'].forEach(route => app.post(route, requireDeveloper, disconnectWhatsApp));
+['/send-message', '/api/whatsapp/send-message'].forEach(route => app.post(route, requireDeveloper, sendMessage));
+app.post('/api/whatsapp/delay', requireDeveloper, (req, res) => {
+    const minimum = Math.max(15000, Number(req.body.minimum ?? req.body.delay) || 15000);
+    const maximum = Math.max(minimum, Number(req.body.maximum) || minimum);
+    db.serialize(() => {
+        db.run("INSERT OR REPLACE INTO settings (key, value) VALUES ('delayBetweenMessages', ?)", [String(minimum)]);
+        db.run("INSERT OR REPLACE INTO settings (key, value) VALUES ('maximumDelayBetweenMessages', ?)", [String(maximum)], err => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, minimum, maximum });
+        });
+    });
+});
+
+wa.on('message', message => {
+    if (message.fromMe) return;
+    const preview = (message.body || `[${message.type}]`).slice(0, 100);
+    db.run('INSERT INTO activity (type, message) VALUES (?, ?)', ['info', `Reply from ${message.from}: ${preview}`]);
+});
+
+// ─── In-flight campaign guard ────────────────────────────────────────────────
+// Tracks campaign IDs that are currently being sent in this process.
+// Prevents duplicate sends if the HTTP route is called more than once, AND
+// prevents the auto-resume from re-triggering a campaign already running.
+// NOTE: This is an in-memory Set — it resets on every server restart (intentionally,
+// because that is exactly when we WANT auto-resume to re-run for stuck campaigns).
+const activeSendingCampaigns = new Set();
+
 // ════════════════════════════════════════════════════════════════════
 // AUTH
 // ════════════════════════════════════════════════════════════════════
@@ -62,7 +122,12 @@ app.post('/api/login', (req, res) => {
     const { email, password } = req.body;
     db.get('SELECT * FROM users WHERE email = ? AND password = ?', [email, password], (err, row) => {
         if (err)  return res.status(500).json({ error: err.message });
-        if (row)  return res.json({ success: true, user: { id: row.id, name: row.name, email: row.email, role: row.role } });
+        if (row) {
+            const user = { id: row.id, name: row.name, email: row.email, role: row.role };
+            const token = uuidv4();
+            sessions.set(token, user);
+            return res.json({ success: true, user, token });
+        }
         return res.status(401).json({ success: false, message: 'Invalid credentials' });
     });
 });
@@ -173,7 +238,7 @@ app.post('/api/customers', (req, res) => {
     );
 });
 
-// POST /api/customers/import  — body: { customers: [{ name, phone }] }
+// POST /api/customers/import  — body: { customers: [{ name, phone, tags }] }
 app.post('/api/customers/import', (req, res) => {
     const { customers: list } = req.body;
     if (!list || !list.length) return res.status(400).json({ error: 'No customers provided' });
@@ -184,7 +249,7 @@ app.post('/api/customers/import', (req, res) => {
 
     list.forEach(c => {
         if (c.phone) {
-            stmt.run([c.name || '', String(c.phone), '', 'Active', '', date]);
+            stmt.run([c.name || '', String(c.phone), '', 'Active', c.tags || '', date]);
             inserted++;
         }
     });
@@ -228,6 +293,19 @@ app.delete('/api/customers', (req, res) => {
     });
 });
 
+// GET /api/customers/groups — Returns unique non-empty tags (groups)
+app.get('/api/customers/groups', (req, res) => {
+    db.all('SELECT DISTINCT tags FROM customers WHERE tags IS NOT NULL AND tags != "" AND status = "Active" ORDER BY tags ASC', [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        // tags column can have comma-separated values, collect all unique group names
+        const groupSet = new Set();
+        rows.forEach(r => {
+            r.tags.split(',').map(t => t.trim()).filter(Boolean).forEach(t => groupSet.add(t));
+        });
+        res.json({ groups: Array.from(groupSet).sort() });
+    });
+});
+
 // ════════════════════════════════════════════════════════════════════
 // CAMPAIGNS  — GET / POST / PUT / DELETE
 // ════════════════════════════════════════════════════════════════════
@@ -257,7 +335,7 @@ app.get('/api/campaigns/:id', (req, res) => {
 
 // POST /api/campaigns
 app.post('/api/campaigns', (req, res) => {
-    const { name, message, status, target_audience, media_ids, scheduledAt, specific_customer_ids } = req.body;
+    const { name, message, status, target_audience, media_ids, scheduledAt, specific_customer_ids, skip_duplicates } = req.body;
     const date = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     
     // First, determine recipients count based on target_audience
@@ -276,42 +354,66 @@ app.post('/api/campaigns', (req, res) => {
 
     db.all(customerSql, customerArgs, (err, customers) => {
         if (err) return res.status(500).json({ error: err.message });
-        
-        const recipientsCount = customers.length;
 
-        // Insert Campaign
-        db.run(
-            `INSERT INTO campaigns (name, message, status, progress, sent, openRate, clickRate, deliveryFail, recipients, date, scheduledAt)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [name, message || '', status || 'Draft', 0, 0, '0%', '0%', '0%', recipientsCount, date, scheduledAt || null],
-            function(err) {
-                if (err) return res.status(500).json({ error: err.message });
-                const campaignId = this.lastID;
+        // ── Skip Duplicates: filter out customers who already received this exact message ──
+        const afterDedup = (filteredCustomers) => {
+            const recipientsCount = filteredCustomers.length;
 
-                // Insert into campaign_customers
-                if (recipientsCount > 0) {
-                    const placeholders = customers.map(() => '(?, ?, ?)').join(',');
-                    const insertArgs = [];
-                    customers.forEach(c => {
-                        insertArgs.push(campaignId, c.id, status === 'Sending' || status === 'Scheduled' ? 'Pending' : 'Draft');
-                    });
-                    db.run(`INSERT INTO campaign_customers (campaign_id, customer_id, status) VALUES ${placeholders}`, insertArgs, (err) => {
-                        if (err) console.error('Failed to link customers', err);
-                    });
+            // Insert Campaign
+            db.run(
+                `INSERT INTO campaigns (name, message, status, progress, sent, openRate, clickRate, deliveryFail, recipients, date, scheduledAt)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [name, message || '', status || 'Draft', 0, 0, '0%', '0%', '0%', recipientsCount, date, scheduledAt || null],
+                function(err) {
+                    if (err) return res.status(500).json({ error: err.message });
+                    const campaignId = this.lastID;
+
+                    // Insert into campaign_customers
+                    if (recipientsCount > 0) {
+                        const placeholders = filteredCustomers.map(() => '(?, ?, ?)').join(',');
+                        const insertArgs = [];
+                        filteredCustomers.forEach(c => {
+                            insertArgs.push(campaignId, c.id, status === 'Sending' || status === 'Scheduled' ? 'Pending' : 'Draft');
+                        });
+                        db.run(`INSERT INTO campaign_customers (campaign_id, customer_id, status) VALUES ${placeholders}`, insertArgs, (err) => {
+                            if (err) console.error('Failed to link customers', err);
+                        });
+                    }
+
+                    // Link media
+                    if (media_ids && media_ids.length > 0) {
+                        const mediaPlaceholders = media_ids.map(() => '?').join(',');
+                        db.run(`UPDATE media SET campaign_id = ? WHERE id IN (${mediaPlaceholders})`, [campaignId, ...media_ids], (err) => {
+                            if (err) console.error('Failed to link media', err);
+                        });
+                    }
+
+                    const skippedCount = customers.length - recipientsCount;
+                    const skippedMsg = skippedCount > 0 ? ` (${skippedCount} already received this message — skipped)` : '';
+                    db.run('INSERT INTO activity (type, message) VALUES (?, ?)', ['success', `Campaign "${name}" created${skippedMsg}`]);
+                    res.json({ success: true, id: campaignId, recipients: recipientsCount, skipped: skippedCount });
                 }
+            );
+        };
 
-                // Link media
-                if (media_ids && media_ids.length > 0) {
-                    const mediaPlaceholders = media_ids.map(() => '?').join(',');
-                    db.run(`UPDATE media SET campaign_id = ? WHERE id IN (${mediaPlaceholders})`, [campaignId, ...media_ids], (err) => {
-                        if (err) console.error('Failed to link media', err);
-                    });
+        if (skip_duplicates && message) {
+            // Find customer IDs who already received the same message text successfully
+            db.all(
+                `SELECT DISTINCT cc.customer_id
+                 FROM campaign_customers cc
+                 JOIN campaigns c ON c.id = cc.campaign_id
+                 WHERE cc.status = 'Sent' AND c.message = ?`,
+                [message],
+                (err, alreadySent) => {
+                    if (err) return afterDedup(customers); // on error, don't filter
+                    const alreadySentIds = new Set(alreadySent.map(r => r.customer_id));
+                    const filtered = customers.filter(c => !alreadySentIds.has(c.id));
+                    afterDedup(filtered);
                 }
-
-                db.run('INSERT INTO activity (type, message) VALUES (?, ?)', ['success', `Campaign "${name}" created`]);
-                res.json({ success: true, id: campaignId, recipients: recipientsCount });
-            }
-        );
+            );
+        } else {
+            afterDedup(customers);
+        }
     });
 });
 
@@ -445,7 +547,9 @@ app.get('/api/settings', (req, res) => {
     db.all('SELECT key, value FROM settings', [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         const obj = {};
-        rows.forEach(r => { obj[r.key] = r.value; });
+        rows.forEach(r => {
+            obj[r.key] = r.value;
+        });
         res.json({ settings: obj });
     });
 });
@@ -462,10 +566,6 @@ app.put('/api/settings', (req, res) => {
 // PUT /api/settings/bulk  — body: { settings: { app_name: 'X', timezone: 'Y', ... } }
 app.put('/api/settings/bulk', (req, res) => {
     const { settings } = req.body;
-    // Encrypt access_token before storing
-    if (settings.access_token && !settings.access_token.includes(':')) {
-        settings.access_token = encrypt(settings.access_token);
-    }
     const stmt = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
     Object.entries(settings).forEach(([k, v]) => stmt.run(k, v));
     stmt.finalize(err => {
@@ -624,15 +724,16 @@ app.post('/api/whatsapp/test', async (req, res) => {
         });
 
         // Decrypt stored token (may be encrypted)
-        const rawToken      = req.body.token         || await getSettingAsync('access_token');
+        const rawToken      = req.body.token         || await getSettingAsync('apiTokenInstance');
         const token         = decrypt(rawToken);
-        const phoneNumberId = req.body.phoneNumberId || await getSettingAsync('phone_id');
+        const idInstance    = req.body.idInstance    || await getSettingAsync('idInstance');
+        const apiUrl        = req.body.apiUrl        || await getSettingAsync('apiUrl');
 
-        if (!token || !phoneNumberId) {
-            return res.status(400).json({ success: false, error: 'Missing token or phoneNumberId' });
+        if (!token || !idInstance || !apiUrl) {
+            return res.status(400).json({ success: false, error: 'Missing token, idInstance or apiUrl' });
         }
 
-        const result = await wa.testConnection(token, phoneNumberId);
+        const result = await wa.testConnection(token, idInstance, apiUrl);
         if (result.success) {
             db.run('INSERT INTO activity (type, message) VALUES (?, ?)', ['success', 'WhatsApp API connection tested successfully']);
         }
@@ -664,21 +765,24 @@ app.post('/api/whatsapp/upload-media', async (req, res) => {
             });
         });
 
-        const token         = decrypt(await getSettingAsync('access_token'));
-        const phoneNumberId = await getSettingAsync('phone_id');
+        const token         = decrypt(await getSettingAsync('apiTokenInstance'));
+        const idInstance    = await getSettingAsync('idInstance');
+        const apiUrl        = await getSettingAsync('apiUrl');
 
-        if (!token || !phoneNumberId) {
+        if (!token || !idInstance || !apiUrl) {
             return res.status(400).json({ success: false, error: 'WhatsApp API credentials not configured' });
         }
 
-        const result = await wa.uploadMedia(filePath, mimeType, token, phoneNumberId);
+        // Green API does not require pre-uploading media like Meta.
+        // We just return the filename as a reference for sendFileByUpload
+        const result = { success: true, mediaId: filename };
 
         if (result.success) {
             // Optionally persist the media_id alongside the media record in DB
             db.run('UPDATE media SET mediaId = ? WHERE filename = ?', [result.mediaId, filename], (err) => {
                 if (err) console.warn('Could not store mediaId in DB (column may not exist yet):', err.message);
             });
-            db.run('INSERT INTO activity (type, message) VALUES (?, ?)', ['info', `Media uploaded to Meta: ${filename}`]);
+            db.run('INSERT INTO activity (type, message) VALUES (?, ?)', ['info', `Media ready for Green API: ${filename}`]);
         }
 
         res.json(result);
@@ -690,7 +794,15 @@ app.post('/api/whatsapp/upload-media', async (req, res) => {
 // POST /api/campaigns/:id/send
 // Triggers actual WhatsApp sending for all Pending/Draft customers (skips Opt-out)
 app.post('/api/campaigns/:id/send', async (req, res) => {
-    const campaignId = req.params.id;
+    const campaignId = parseInt(req.params.id, 10);
+
+    // ─ Guard: reject if this campaign is already sending in this process ─
+    if (activeSendingCampaigns.has(campaignId)) {
+        return res.status(409).json({
+            success: false,
+            error: 'Campaign is already being sent. Please wait for it to complete.'
+        });
+    }
 
     try {
         // ── Load campaign ──────────────────────────────────────────────
@@ -714,14 +826,27 @@ app.post('/api/campaigns/:id/send', async (req, res) => {
             });
         });
 
-        const token         = decrypt(settings['access_token']);
-        const phoneNumberId = settings['phone_id'];
-        const delayMs       = parseInt(settings['whatsapp_delay_ms'] || '1000', 10);
+        const delayMs       = Math.max(15000, parseInt(settings['delayBetweenMessages'] || '20000', 10));
+        const maximumDelayMs = Math.max(delayMs, parseInt(settings['maximumDelayBetweenMessages'] || '45000', 10));
+        
+        // ── Daily Limit Setup ──────────────────────────────────────────
+        const maxDaily = parseInt(settings['maxMessagesPerDay'] || '300', 10);
+        let dailySentCount = parseInt(settings['dailySentCount'] || '0', 10);
+        let dailySentDate  = settings['dailySentDate'] || '';
+        const todayStr     = new Date().toISOString().split('T')[0];
 
-        if (!token || !phoneNumberId) {
+        // Reset if it's a new day
+        if (dailySentDate !== todayStr) {
+            dailySentCount = 0;
+            dailySentDate  = todayStr;
+            db.run("UPDATE settings SET value = ? WHERE key = 'dailySentDate'", [todayStr]);
+            db.run("UPDATE settings SET value = '0' WHERE key = 'dailySentCount'");
+        }
+
+        if (!wa.getStatus().connected) {
             return res.status(400).json({
                 success: false,
-                error: 'WhatsApp API credentials not configured. Go to Settings > API Connection.'
+                error: 'WhatsApp is not connected. Open Settings > WhatsApp Connection and scan the QR code.'
             });
         }
 
@@ -771,14 +896,14 @@ app.post('/api/campaigns/:id/send', async (req, res) => {
             skipped:  customers.length - activeCount
         });
 
-        // ── Background send ────────────────────────────────────────────
+        // ─ Mark as in-flight ─
+        activeSendingCampaigns.add(campaignId);
         wa.sendCampaign(
             customers,
             campaign.message,
             media,
-            token,
-            phoneNumberId,
             delayMs,
+            maximumDelayMs,
             (result) => {
                 if (result.skipped) {
                     // Mark opted-out customer as Skipped
@@ -803,25 +928,50 @@ app.post('/api/campaigns/:id/send', async (req, res) => {
 
                 if (result.success) {
                     db.run('UPDATE campaigns SET sent = sent + 1 WHERE id = ?', [campaignId]);
+                    
+                    // Update daily limit
+                    dailySentCount++;
+                    db.run("UPDATE settings SET value = ? WHERE key = 'dailySentCount'", [dailySentCount]);
                 }
+
+                // ── Check if we hit the daily limit ───────────────────
+                if (maxDaily > 0 && dailySentCount >= maxDaily) {
+                    db.run('INSERT INTO activity (type, message) VALUES (?, ?)',
+                        ['warning', `Daily send limit reached (${dailySentCount}/${maxDaily}) — campaign "${campaign.name}" paused. It will resume tomorrow.`]);
+                    
+                    return false; // Tells whatsapp.js to break out of the loop
+                }
+                
+                return true;
             },
-            template
-        ).then(({ sent, failed, skipped }) => {
+            
+        ).then(({ sent, failed, skipped, paused }) => {
             const total    = sent + failed;
             const progress = total > 0 ? Math.round((sent / total) * 100) : 0;
             const failRate = total > 0 ? `${Math.round((failed / total) * 100)}%` : '0%';
 
+            // If it was paused due to daily limit, do NOT mark Completed. 
+            // It remains in 'Sending' status but the loop has ended, so it acts like "Paused".
+            // Auto-resume will pick it up the next day.
+            const newStatus = (maxDaily > 0 && dailySentCount >= maxDaily) ? 'Sending' : 'Completed';
+
             db.run(
                 `UPDATE campaigns SET status = ?, progress = ?, deliveryFail = ? WHERE id = ?`,
-                ['Completed', progress, failRate, campaignId]
+                [newStatus, progress, failRate, campaignId]
             );
-            db.run(
-                'INSERT INTO activity (type, message) VALUES (?, ?)',
-                ['success', `Campaign "${campaign.name}" completed — ${sent} sent, ${failed} failed, ${skipped} skipped`]
-            );
+            
+            if (newStatus === 'Completed') {
+                db.run(
+                    'INSERT INTO activity (type, message) VALUES (?, ?)',
+                    ['success', `Campaign "${campaign.name}" completed — ${sent} sent, ${failed} failed, ${skipped} skipped`]
+                );
+            }
         }).catch(err => {
             db.run('UPDATE campaigns SET status = ? WHERE id = ?', ['Draft', campaignId]);
             db.run('INSERT INTO activity (type, message) VALUES (?, ?)', ['danger', `Campaign send error: ${err.message}`]);
+        }).finally(() => {
+            // Always release the lock when the send loop ends (success, failure, or crash)
+            activeSendingCampaigns.delete(campaignId);
         });
 
     } catch (err) {
@@ -840,12 +990,21 @@ app.get('/api/campaigns/:id/progress', (req, res) => {
         [campaignId],
         (err, rows) => {
             if (err) return res.status(500).json({ error: err.message });
-            const stats = { Sent: 0, Failed: 0, Pending: 0, Draft: 0, Skipped: 0 };
-            rows.forEach(r => { stats[r.status] = r.count; });
-            const total    = Object.values(stats).reduce((a, b) => a + b, 0);
-            const done     = stats.Sent + stats.Failed + stats.Skipped;
-            const progress = total > 0 ? Math.round((done / total) * 100) : 0;
-            res.json({ stats, total, progress });
+            const counts = { Sent: 0, Failed: 0, Pending: 0, Draft: 0, Skipped: 0 };
+            rows.forEach(r => { counts[r.status] = r.count; });
+
+            const sent    = counts.Sent;
+            const failed  = counts.Failed;
+            const pending = counts.Pending + counts.Draft;
+            const skipped = counts.Skipped;
+            const total   = sent + failed + pending + skipped;
+
+            // Percentage is out of actionable recipients (excluding skipped opt-outs)
+            const actionable  = total - skipped;
+            const done        = sent + failed;
+            const percentage  = actionable > 0 ? Math.round((done / actionable) * 100) : 0;
+
+            res.json({ total, sent, failed, pending, skipped, percentage });
         }
     );
 });
@@ -974,6 +1133,7 @@ app.use((err, req, res, next) => {
 
 // ════════════════════════════════════════════════════════════════════
 app.listen(PORT, () => {
+    wa.initialize().catch(error => console.error('WhatsApp Web initialization failed:', error.message));
     console.log(`\n✅  Server running at http://localhost:${PORT}`);
     console.log('─────────────────────────────────────────');
     console.log('  POST   /api/login');
@@ -1011,4 +1171,160 @@ app.listen(PORT, () => {
     console.log('  GET    /webhook           (Meta verification)');
     console.log('  POST   /webhook           (Meta events)');
     console.log('─────────────────────────────────────────\n');
+
+    // ════════════════════════════════════════════════════════════════════
+    // AUTO-RESUME: campaigns stuck in 'Sending' (from crash or daily limit)
+    // ════════════════════════════════════════════════════════════════════
+    async function checkAndResumeCampaigns() {
+        try {
+            const stuckCampaigns = await new Promise((resolve, reject) => {
+                db.all(
+                    `SELECT id, name FROM campaigns WHERE status = 'Sending'`,
+                    [],
+                    (err, rows) => err ? reject(err) : resolve(rows)
+                );
+            });
+
+            if (stuckCampaigns.length === 0) return;
+
+            // Load shared settings once
+            const settingsRows = await new Promise((resolve, reject) => {
+                db.all('SELECT key, value FROM settings', [], (err, rows) => err ? reject(err) : resolve(rows));
+            });
+            const settings = {};
+            settingsRows.forEach(r => { settings[r.key] = r.value; });
+
+            const delayMs    = Math.max(15000, parseInt(settings['delayBetweenMessages'] || '20000', 10));
+            const maximumDelayMs = Math.max(delayMs, parseInt(settings['maximumDelayBetweenMessages'] || '45000', 10));
+            
+            // Daily Limit setup
+            const maxDaily = parseInt(settings['maxMessagesPerDay'] || '300', 10);
+            let dailySentCount = parseInt(settings['dailySentCount'] || '0', 10);
+            let dailySentDate  = settings['dailySentDate'] || '';
+            const todayStr     = new Date().toISOString().split('T')[0];
+
+            if (dailySentDate !== todayStr) {
+                dailySentCount = 0;
+                dailySentDate  = todayStr;
+                db.run("UPDATE settings SET value = ? WHERE key = 'dailySentDate'", [todayStr]);
+                db.run("UPDATE settings SET value = '0' WHERE key = 'dailySentCount'");
+            }
+
+            if (!wa.getStatus().connected) {
+                return; // Wait until the locally persisted WhatsApp Web session reconnects.
+            }
+
+            // Guard: If we are already at the max limit for today, do not resume yet!
+            if (maxDaily > 0 && dailySentCount >= maxDaily) {
+                return; 
+            }
+
+            for (const campaign of stuckCampaigns) {
+                // ─ Guard: skip if already picked up by another code path ─
+                if (activeSendingCampaigns.has(campaign.id)) {
+                    console.log(`[Auto-Resume] Campaign #${campaign.id} already in-flight, skipping.`);
+                    continue;
+                }
+
+                // Only resume PENDING recipients — skip Sent/Failed/Skipped to avoid duplicates
+                const pendingCustomers = await new Promise((resolve, reject) => {
+                    db.all(
+                        `SELECT cc.id as cc_id, c.id, c.name, c.phone, c.status
+                         FROM campaign_customers cc
+                         JOIN customers c ON c.id = cc.customer_id
+                         WHERE cc.campaign_id = ? AND cc.status = 'Pending'`,
+                        [campaign.id],
+                        (err, rows) => err ? reject(err) : resolve(rows)
+                    );
+                });
+
+                if (pendingCustomers.length === 0) {
+                    // All recipients already processed — mark Completed
+                    db.run(`UPDATE campaigns SET status = 'Completed' WHERE id = ?`, [campaign.id]);
+                    console.log(`[Auto-Resume] Campaign #${campaign.id} "${campaign.name}" — all done, marked Completed.`);
+                    continue;
+                }
+
+                const media = await new Promise((resolve, reject) => {
+                    db.all('SELECT * FROM media WHERE campaign_id = ?', [campaign.id],
+                        (err, rows) => err ? reject(err) : resolve(rows));
+                });
+
+                const campaignRow = await new Promise((resolve, reject) => {
+                    db.get('SELECT * FROM campaigns WHERE id = ?', [campaign.id],
+                        (err, row) => err ? reject(err) : resolve(row));
+                });
+
+                console.log(`[Auto-Resume] Resuming campaign #${campaign.id} "${campaign.name}" — ${pendingCustomers.length} pending recipients.`);
+                db.run('INSERT INTO activity (type, message) VALUES (?, ?)',
+                    ['info', `Auto-resumed campaign "${campaign.name}" (${pendingCustomers.length} pending after restart)`]);
+
+                activeSendingCampaigns.add(campaign.id);
+
+                // Resume sending in background (do not await — let the loop continue)
+                wa.sendCampaign(
+                    pendingCustomers,
+                    campaignRow.message,
+                    media,
+                    delayMs,
+                    maximumDelayMs,
+                    (result) => {
+                        if (result.skipped) {
+                            db.run(`UPDATE campaign_customers SET status = 'Skipped' WHERE campaign_id = ? AND customer_id = ?`,
+                                [campaign.id, result.customerId]);
+                            return;
+                        }
+                        const status      = result.success ? 'Sent' : 'Failed';
+                        const deliveredAt = result.success ? new Date().toISOString() : null;
+                        const errorMsg    = result.success ? '' : (result.error || '');
+                        db.run(
+                            `UPDATE campaign_customers SET status = ?, deliveredAt = ?, errorMessage = ? WHERE campaign_id = ? AND customer_id = ?`,
+                            [status, deliveredAt, errorMsg, campaign.id, result.customerId]
+                        );
+                        if (result.success) {
+                            db.run('UPDATE campaigns SET sent = sent + 1 WHERE id = ?', [campaign.id]);
+                            dailySentCount++;
+                            db.run("UPDATE settings SET value = ? WHERE key = 'dailySentCount'", [dailySentCount]);
+                        }
+                        
+                        // Enforce limit
+                        if (maxDaily > 0 && dailySentCount >= maxDaily) {
+                            db.run('INSERT INTO activity (type, message) VALUES (?, ?)',
+                                ['warning', `Daily send limit reached (${dailySentCount}/${maxDaily}) — auto-resumed campaign "${campaign.name}" paused again.`]);
+                            return false;
+                        }
+                        return true;
+                    }
+                ).then(({ sent, failed, skipped }) => {
+                    const total    = sent + failed;
+                    const progress = total > 0 ? Math.round((sent / total) * 100) : 0;
+                    const failRate = total > 0 ? `${Math.round((failed / total) * 100)}%` : '0%';
+                    
+                    const newStatus = (maxDaily > 0 && dailySentCount >= maxDaily) ? 'Sending' : 'Completed';
+                    
+                    db.run(`UPDATE campaigns SET status = ?, progress = ?, deliveryFail = ? WHERE id = ?`,
+                        [newStatus, progress, failRate, campaign.id]);
+                        
+                    if (newStatus === 'Completed') {
+                        db.run('INSERT INTO activity (type, message) VALUES (?, ?)',
+                            ['success', `Campaign "${campaign.name}" resumed & completed — ${sent} sent, ${failed} failed`]);
+                    }
+                }).catch(err => {
+                    console.error(`[Auto-Resume] Campaign #${campaign.id} error:`, err.message);
+                    db.run('INSERT INTO activity (type, message) VALUES (?, ?)',
+                        ['danger', `Auto-resume error for "${campaign.name}": ${err.message}`]);
+                }).finally(() => {
+                    activeSendingCampaigns.delete(campaign.id);
+                });
+            }
+        } catch (err) {
+            console.error('[Auto-Resume] Background check failed:', err.message);
+        }
+    }
+
+    // Run once 2 seconds after server starts (to catch crashes)
+    setTimeout(checkAndResumeCampaigns, 2000);
+
+    // Then run every 5 minutes (to catch midnight resets while server is running)
+    setInterval(checkAndResumeCampaigns, 5 * 60 * 1000);
 });

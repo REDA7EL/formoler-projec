@@ -4,7 +4,7 @@ import './Header.css';
 
 import { useNavigate } from 'react-router-dom';
 
-const Header = ({ title, searchQuery, setSearchQuery }) => {
+const Header = ({ title, searchQuery = '', setSearchQuery }) => {
   const navigate = useNavigate();
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -13,6 +13,7 @@ const Header = ({ title, searchQuery, setSearchQuery }) => {
 
   const handleLogout = () => {
     localStorage.removeItem('user');
+    localStorage.removeItem('sessionToken');
     navigate('/login');
   };
 
@@ -54,10 +55,10 @@ const Header = ({ title, searchQuery, setSearchQuery }) => {
         </div>
         
         <div style={{ position: 'relative' }} ref={notifRef}>
-          <button className="icon-btn" onClick={() => setShowNotifications(!showNotifications)}>
-            <MdNotifications size={22} />
-            <span className="notification-dot"></span>
-          </button>
+            <button className="icon-btn notif-btn" onClick={() => setShowNotifications(!showNotifications)}>
+              <MdNotifications size={22} />
+              {notifications.length > 0 && <span className="notification-dot"></span>}
+            </button>
           
           {showNotifications && (
             <div className="card" style={{ position: 'absolute', top: '40px', right: '0', width: '320px', zIndex: 1000, padding: '16px' }}>

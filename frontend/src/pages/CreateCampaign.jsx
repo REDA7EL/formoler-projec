@@ -1,12 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import Header from '../components/Header';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { 
   MdFormatBold, MdFormatItalic, MdFormatStrikethrough, MdEmojiEmotions, 
   MdCode, MdSave, MdSend, MdArrowBack, MdImage, MdVideocam, MdMic,
-  MdClose, MdCheckCircle, MdUpload
+  MdClose, MdCheckCircle
 } from 'react-icons/md';
 import EmojiPicker from 'emoji-picker-react';
+import Header from '../components/Header';
 import './CreateCampaign.css';
 
 const CreateCampaign = () => {
@@ -180,7 +180,7 @@ const CreateCampaign = () => {
   return (
     <div className="create-campaign-page">
       <div className="breadcrumbs">
-        <a href="/campaigns">Campaigns</a> &gt; <span>Create New Campaign</span>
+        <Link to="/campaigns">Campaigns</Link> &gt; <span>Create New Campaign</span>
       </div>
       <Header title="Create Campaign" />
 

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import Header from '../components/Header';
-import { MdSearch, MdFilterList, MdFileDownload, MdPersonAdd, MdEdit, MdDelete, MdClose, MdCheckCircle, MdError } from 'react-icons/md';
+import { MdSearch, MdFileDownload, MdPersonAdd, MdEdit, MdDelete, MdClose, MdCheckCircle, MdError } from 'react-icons/md';
 import * as XLSX from 'xlsx';
 import './Customers.css';
 
@@ -56,7 +55,7 @@ const Customers = () => {
   // Selection Logic
   const handleSelectAll = (e) => {
     if (e.target.checked) {
-      setSelectedIds(customers.map(c => c.id));
+      setSelectedIds(filteredCustomers.map(c => c.id));
     } else {
       setSelectedIds([]);
     }
@@ -86,11 +85,17 @@ const Customers = () => {
   const handleDeleteSelected = async () => {
     if (selectedIds.length === 0) return;
     if (window.confirm(`Are you sure you want to delete ${selectedIds.length} customers?`)) {
-      for (const id of selectedIds) {
-        await fetch(`http://localhost:3001/api/customers/${id}`, { method: 'DELETE' });
+      try {
+        await fetch('http://localhost:3001/api/customers', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: selectedIds })
+        });
+        fetchCustomers();
+        setSelectedIds([]);
+      } catch (err) {
+        console.error('Failed to bulk delete', err);
       }
-      fetchCustomers();
-      setSelectedIds([]);
     }
   };
 
@@ -317,7 +322,7 @@ const Customers = () => {
                   <input 
                     type="checkbox" 
                     className="custom-checkbox" 
-                    checked={customers.length > 0 && selectedIds.length === customers.length}
+                    checked={filteredCustomers.length > 0 && filteredCustomers.every(c => selectedIds.includes(c.id))}
                     onChange={handleSelectAll}
                   />
                 </th>
@@ -342,7 +347,7 @@ const Customers = () => {
                   <td>
                     <div className="customer-name-cell">
                       <div className="customer-avatar" style={{backgroundColor: customer.status === 'Active' ? '#10B981' : '#0EA5E9'}}>
-                        {customer.name.substring(0, 2).toUpperCase()}
+                        {(customer.name || '?').substring(0, 2).toUpperCase()}
                       </div>
                       <span>{customer.name}</span>
                     </div>

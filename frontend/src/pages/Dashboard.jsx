@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import Header from '../components/Header';
+import { Link } from 'react-router-dom';
 import { MdPeople, MdMessage, MdCheck, MdCampaign, MdMoreVert } from 'react-icons/md';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import './Dashboard.css';
 
 const Dashboard = () => {
-  const [searchQuery, setSearchQuery] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
   const [stats, setStats] = useState({
     totalCustomers: '0',
     totalCustomersGrowth: '0%',
@@ -20,44 +20,32 @@ const Dashboard = () => {
   const [recentCampaigns, setRecentCampaigns] = useState([]);
 
   useEffect(() => {
-    // Fetch stats
-    fetch('http://localhost:3001/api/dashboard/stats')
-      .then(res => res.json())
-      .then(data => setStats(data))
-      .catch(err => console.error("Failed to fetch stats", err));
-      
-    // Fetch campaigns
-    fetch('http://localhost:3001/api/campaigns')
-      .then(res => res.json())
-      .then(data => {
-        // Sort by id descending to get most recent
-        const sorted = data.campaigns.sort((a, b) => b.id - a.id);
-        setRecentCampaigns(sorted);
+    Promise.all([
+      fetch('http://localhost:3001/api/dashboard/stats').then(r => r.json()),
+      fetch('http://localhost:3001/api/campaigns').then(r => r.json()),
+      fetch('http://localhost:3001/api/activity').then(r => r.json()),
+    ])
+      .then(([statsData, campaignsData, activityData]) => {
+        setStats(statsData);
+        if (campaignsData.campaigns) {
+          const sorted = [...campaignsData.campaigns].sort((a, b) => b.id - a.id);
+          setRecentCampaigns(sorted);
+        }
+        if (activityData.activity) setRecentActivity(activityData.activity);
       })
-      .catch(err => console.error("Failed to fetch campaigns", err));
-
-    // Fetch activity
-    fetch('http://localhost:3001/api/activity')
-      .then(res => res.json())
-      .then(data => {
-        if (data.activity) setRecentActivity(data.activity);
-      })
-      .catch(err => console.error("Failed to fetch activity", err));
+      .catch(err => console.error('Dashboard fetch failed', err))
+      .finally(() => setIsLoading(false));
   }, []);
 
-  // Filter campaigns by search query
-  const filteredCampaigns = recentCampaigns.filter(c => 
-    c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.status.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+
 
   return (
     <div className="dashboard-page">
-      <Header 
-        title="Campaign Manager" 
-        searchQuery={searchQuery} 
-        setSearchQuery={setSearchQuery} 
-      />
+      {isLoading && (
+        <div className="loading-overlay">
+          <div className="loading-spinner" />
+        </div>
+      )}
       
       <div className="content-area">
         {/* Stats Row */}
@@ -165,8 +153,8 @@ const Dashboard = () => {
         {/* Recent Campaigns Table */}
         <div className="recent-campaigns-section">
           <div className="section-header">
-            <h2 className="section-title">Recent Campaigns {searchQuery && `(Search: "${searchQuery}")`}</h2>
-            <a href="/campaigns" className="view-all-link">View All</a>
+            <h2 className="section-title">Recent Campaigns</h2>
+            <Link to="/campaigns" className="view-all-link">View All</Link>
           </div>
           
           <div className="table-container">
@@ -181,7 +169,7 @@ const Dashboard = () => {
                 </tr>
               </thead>
               <tbody>
-                {filteredCampaigns.length > 0 ? filteredCampaigns.slice(0, 5).map(campaign => (
+                {recentCampaigns.length > 0 ? recentCampaigns.slice(0, 5).map(campaign => (
                   <tr key={campaign.id}>
                     <td>{campaign.name}</td>
                     <td>
@@ -191,7 +179,9 @@ const Dashboard = () => {
                     </td>
                     <td>
                       <div className="progress-bar-container">
-                        <div className={`progress-bar bg-${campaign.status === 'Completed' ? 'neutral' : 'success'}`} style={{width: `${campaign.progress}%`}}></div>
+                        <div className="progress-bar-track">
+                          <div className={`progress-bar-fill bg-${campaign.status === 'Completed' ? 'neutral' : 'success'}`} style={{width: `${campaign.progress}%`}}></div>
+                        </div>
                         <span className="progress-text">{campaign.progress}%</span>
                       </div>
                     </td>
@@ -201,7 +191,7 @@ const Dashboard = () => {
                 )) : (
                   <tr>
                     <td colSpan="5" style={{textAlign: 'center', padding: '24px', color: '#94A3B8'}}>
-                      {searchQuery ? 'No campaigns match your search.' : 'No campaigns created yet.'}
+                      No campaigns created yet.
                     </td>
                   </tr>
                 )}

@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { MdDashboard, MdPeople, MdCampaign, MdHistory, MdSettings, MdAdd, MdLogout } from 'react-icons/md';
+import { MdDashboard, MdPeople, MdCampaign, MdHistory, MdSettings, MdAdd, MdLogout, MdArticle } from 'react-icons/md';
 import './Sidebar.css';
 
 const Sidebar = () => {
@@ -10,6 +10,7 @@ const Sidebar = () => {
 
   const handleLogout = () => {
     localStorage.removeItem('user');
+    localStorage.removeItem('sessionToken');
     navigate('/login');
   };
 
@@ -32,20 +33,22 @@ const Sidebar = () => {
           </div>
 
           <nav className="sidebar-nav">
+            <div className="sidebar-section-label">Overview</div>
             <NavLink to="/" className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')} end>
-              <MdDashboard size={20} /> Dashboard
+              <MdDashboard size={19} /> Dashboard
             </NavLink>
+            <div className="sidebar-section-label">Manage</div>
             <NavLink to="/customers" className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}>
-              <MdPeople size={20} /> Customers
+              <MdPeople size={19} /> Customers
             </NavLink>
             <NavLink to="/campaigns" className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')} end>
-              <MdCampaign size={20} /> Campaigns
-            </NavLink>
-            <NavLink to="/history" className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}>
-              <MdHistory size={20} /> History
+              <MdCampaign size={19} /> Campaigns
             </NavLink>
             <NavLink to="/templates" className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}>
-              <MdCampaign size={20} /> Templates
+              <MdArticle size={19} /> Templates
+            </NavLink>
+            <NavLink to="/history" className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}>
+              <MdHistory size={19} /> History
             </NavLink>
           </nav>
         </>

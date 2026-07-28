@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import Header from '../components/Header';
 import { MdFilterList, MdSend, MdMarkEmailRead, MdTouchApp, MdErrorOutline, MdClose } from 'react-icons/md';
 import './History.css';
 
@@ -18,7 +17,7 @@ const History = () => {
   useEffect(() => {
     fetch('http://localhost:3001/api/campaigns')
       .then(res => res.json())
-      .then(data => setCampaigns(data.campaigns))
+      .then(data => setCampaigns(data.campaigns || []))
       .catch(err => console.error(err));
 
     fetch('http://localhost:3001/api/history/stats')
@@ -87,8 +86,8 @@ const History = () => {
               </tr>
             </thead>
             <tbody>
-              {campaigns.length > 0 ? campaigns.map((camp, idx) => (
-                <tr key={idx}>
+              {campaigns.length > 0 ? campaigns.map((camp) => (
+                <tr key={camp.id}>
                   <td>
                     <div className="campaign-name">{camp.name}</div>
                     <div className="campaign-date">Sent: {camp.date} • 09:00 AM</div>

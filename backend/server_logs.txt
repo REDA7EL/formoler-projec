@@ -1,0 +1,41 @@
+◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+
+✅  Server running at http://localhost:3001
+─────────────────────────────────────────
+  POST   /api/login
+  GET    /api/dashboard/stats
+  GET    /api/dashboard/activity
+  GET    /api/customers  [?search=&status=]
+  POST   /api/customers
+  PUT    /api/customers/:id
+  DELETE /api/customers/:id
+  DELETE /api/customers  (bulk)
+  GET    /api/campaigns  [?search=&status=]
+  POST   /api/campaigns
+  PUT    /api/campaigns/:id
+  DELETE /api/campaigns/:id
+  DELETE /api/campaigns  (bulk)
+  GET    /api/history/stats
+  GET    /api/settings
+  PUT    /api/settings
+  PUT    /api/settings/bulk
+  GET    /api/team
+  POST   /api/team
+  DELETE /api/team/:id
+  POST   /api/media/upload         (single file)
+  POST   /api/media/upload-multiple (up to 5 files)
+  GET    /api/media  [?campaign_id=&type=]
+  DELETE /api/media/:id
+  POST   /api/whatsapp/test
+  POST   /api/whatsapp/upload-media
+  POST   /api/campaigns/:id/send
+  GET    /api/campaigns/:id/progress
+  GET    /api/templates
+  POST   /api/templates
+  PUT    /api/templates/:id
+  DELETE /api/templates/:id
+  GET    /webhook           (Meta verification)
+  POST   /webhook           (Meta events)
+─────────────────────────────────────────
+
+Connected to the SQLite database.

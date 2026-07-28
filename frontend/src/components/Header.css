@@ -1,3 +1,18 @@
+.page-header {
+  padding: 16px 28px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  background: rgba(11, 20, 32, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  min-height: 64px;
+}
+
 .header-title {
   flex: 1;
 }
@@ -5,22 +20,31 @@
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 12px;
 }
 
+/* Search Bar */
 .search-bar {
   display: flex;
   align-items: center;
-  background-color: var(--bg-dark);
-  border: 1px solid var(--border-color);
-  border-radius: 20px;
-  padding: 6px 16px;
-  width: 300px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 0 12px;
+  width: 260px;
+  transition: all 0.2s ease;
+}
+
+.search-bar:focus-within {
+  border-color: var(--accent-primary);
+  background: rgba(16, 185, 129, 0.04);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
 }
 
 .search-icon {
-  color: var(--text-muted);
-  margin-right: 8px;
+  color: var(--text-secondary);
+  font-size: 17px;
+  flex-shrink: 0;
 }
 
 .search-input {
@@ -29,50 +53,64 @@
   color: var(--text-main);
   outline: none;
   width: 100%;
-  font-size: 14px;
+  font-size: 13px;
+  font-family: var(--font-family);
+  padding: 8px 8px;
 }
 
 .search-input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
-.icon-btn {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
+/* Notification Button */
+.notif-btn {
   position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.2s;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
 }
 
-.icon-btn:hover {
-  color: var(--text-main);
+.notif-btn:hover {
+  background: rgba(255,255,255,0.08);
 }
 
 .notification-dot {
   position: absolute;
-  top: 0;
-  right: 0;
-  width: 8px;
-  height: 8px;
-  background-color: var(--danger-color);
+  top: 6px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  background: var(--danger-color);
   border-radius: 50%;
-  border: 2px solid var(--bg-dark);
+  border: 1.5px solid #0B1420;
+  animation: pulse 2s ease infinite;
 }
 
+/* Profile Pic */
 .profile-pic {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   overflow: hidden;
   cursor: pointer;
+  border: 2px solid rgba(16, 185, 129, 0.3);
+  transition: all 0.2s ease;
+}
+
+.profile-pic:hover {
+  border-color: var(--accent-primary);
+  transform: scale(1.05);
 }
 
 .profile-pic img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.7; transform: scale(0.9); }
 }
